@@ -8,6 +8,7 @@
 #include <cmath>
 #include <thread>
 #include <mutex>
+#include <random>
 
 // Configuration constants
 const int CAPTURE_SIZE = 186;               // Size of screenshot in pixels
@@ -26,6 +27,33 @@ const BYTE WHITE_THRESHOLD = 0xFE;          // White pixel threshold (254)
 
 bool saveEnabled = false;
 std::mutex saveMutex;                       // Mutex for thread-safe file operations
+
+// Simulate SPACE key press for random duration between 80-150ms
+void PressSpaceKey() {
+    // Random number generator
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dis(80, 150);
+    int pressDuration = dis(gen);
+    
+    // Prepare input structure for key down
+    INPUT input = {0};
+    input.type = INPUT_KEYBOARD;
+    input.ki.wVk = VK_SPACE;
+    input.ki.dwFlags = 0; // 0 for key press
+    
+    // Send key down
+    SendInput(1, &input, sizeof(INPUT));
+    
+    // Hold for random duration
+    Sleep(pressDuration);
+    
+    // Prepare input structure for key up
+    input.ki.dwFlags = KEYEVENTF_KEYUP;
+    
+    // Send key up
+    SendInput(1, &input, sizeof(INPUT));
+}
 
 // Structure to hold pixel coordinates
 struct PixelPos {
@@ -303,6 +331,12 @@ bool CaptureAndProcess(int size, int posX, int posY,
         if (redPixels.size() >= MIN_RED_PIXELS) {
             secondCondition = true;
             
+            // Press SPACE key in separate thread
+            std::thread spaceThread([]() {
+                PressSpaceKey();
+            });
+            spaceThread.detach(); // Run independently
+            
             // Save image in separate thread if enabled
             if (saveEnabled) {
                 // Copy buffer for thread
@@ -361,7 +395,7 @@ int main() {
               << " save=" << (saveEnabled ? "yes" : "no") << "\n";
     std::cout << "Monitoring for white pixels (>=" << (int)WHITE_THRESHOLD << ") in ring "
               << "(inner radius=" << RING_INNER_RADIUS << ", outer radius=" << RING_OUTER_RADIUS << ")...\n";
-    std::cout << "First condition: >= " << MIN_WHITE_PIXELS << " white pixels\n";
+    std::cout << "First condition: >= " << MIN_WHITE_PIXELS << " connected white pixels (must share sides)\n";
     std::cout << "Second condition: >= " << MIN_RED_PIXELS << " pixels with R>=" << (int)RED_THRESHOLD 
               << " AND G,B<" << (int)OTHER_CHANNEL_MAX 
               << " AND R>" << (int)RED_DOMINANCE << " more than G,B\n";
