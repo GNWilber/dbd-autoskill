@@ -1,0 +1,15 @@
+*
+!*/
+
+# Whitelist
+!*.cpp
+!*.h
+!*.md
+!*.pdf
+!*.txt
+!*.json
+!*.html
+!.gitignore
+
+# Blacklist
+.vscode/
