@@ -14,13 +14,14 @@ const int CAPTURE_SIZE = 186;               // Size of screenshot in pixels
 const int CAPTURE_POS_X = 1187;             // X position of capture area
 const int CAPTURE_POS_Y = 607;              // Y position of capture area
 const double RING_OUTER_RADIUS = 89.0;      // Outer ring radius in pixels
-const double RING_INNER_RADIUS = 84.0;      // Inner ring radius in pixels
+const double RING_INNER_RADIUS = 85.0;      // Inner ring radius in pixels
 const int MIN_WHITE_PIXELS = 16;            // Minimum white pixels to trigger first condition
 const int MIN_RED_PIXELS = 2;               // Minimum red pixels to trigger second condition
 const int TIMER_DURATION_MS = 1200;         // Timer duration in milliseconds
-const int RESET_DELAY_MS = 500;             // Delay after condition reset
+const int RESET_DELAY_MS = 1000;            // Delay after condition reset
 const BYTE RED_THRESHOLD = 50;              // Red channel threshold (0-255)
 const BYTE OTHER_CHANNEL_MAX = 150;         // Max value for green/blue when checking red
+const BYTE RED_DOMINANCE = 20;              // Red must be this much higher than other channels
 const BYTE WHITE_THRESHOLD = 0xFE;          // White pixel threshold (254)
 
 bool saveEnabled = false;
@@ -107,9 +108,13 @@ bool IsWhiteish(BYTE r, BYTE g, BYTE b) {
     return r >= WHITE_THRESHOLD && g >= WHITE_THRESHOLD && b >= WHITE_THRESHOLD;
 }
 
-// Check if pixel is red (R >= RED_THRESHOLD, G and B < OTHER_CHANNEL_MAX)
+// Check if pixel is red (R >= RED_THRESHOLD, G and B < OTHER_CHANNEL_MAX, and R is RED_DOMINANCE higher than G and B)
 bool IsReddish(BYTE r, BYTE g, BYTE b) {
-    return r >= RED_THRESHOLD && g < OTHER_CHANNEL_MAX && b < OTHER_CHANNEL_MAX;
+    return r >= RED_THRESHOLD && 
+           g < OTHER_CHANNEL_MAX && 
+           b < OTHER_CHANNEL_MAX &&
+           r >= (g + RED_DOMINANCE) &&
+           r >= (b + RED_DOMINANCE);
 }
 
 // Main capture and processing function
@@ -282,7 +287,8 @@ int main() {
               << "(inner radius=" << RING_INNER_RADIUS << ", outer radius=" << RING_OUTER_RADIUS << ")...\n";
     std::cout << "First condition: >= " << MIN_WHITE_PIXELS << " white pixels\n";
     std::cout << "Second condition: >= " << MIN_RED_PIXELS << " pixels with R>=" << (int)RED_THRESHOLD 
-              << " AND G,B<" << (int)OTHER_CHANNEL_MAX << "\n";
+              << " AND G,B<" << (int)OTHER_CHANNEL_MAX 
+              << " AND R>" << (int)RED_DOMINANCE << " more than G,B\n";
     std::cout << "Timer: " << TIMER_DURATION_MS << "ms, Reset delay: " << RESET_DELAY_MS << "ms\n\n";
 
     // Main loop variables
