@@ -2,6 +2,7 @@
 !*/
 
 # Whitelist
+!.gitignore
 !*.cpp
 !*.h
 !*.md
@@ -9,7 +10,7 @@
 !*.txt
 !*.json
 !*.html
-!.gitignore
+!*.bat
 
 # Blacklist
 .vscode/
