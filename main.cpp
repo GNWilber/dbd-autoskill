@@ -10,30 +10,50 @@
 #include <mutex>
 #include <random>
 
-// Configuration constants
+// Configuration constants - Easy to modify
 const int CAPTURE_SIZE = 186;               // Size of screenshot in pixels
 const int CAPTURE_POS_X = 1187;             // X position of capture area
 const int CAPTURE_POS_Y = 607;              // Y position of capture area
 const double RING_OUTER_RADIUS = 89.0;      // Outer ring radius in pixels
 const double RING_INNER_RADIUS = 85.0;      // Inner ring radius in pixels
-const int MIN_WHITE_PIXELS = 40;            // Minimum white pixels to trigger first condition
+const int RING_CENTER_OFFSET_X = -1;        // Ring center offset from image center (negative = left)
+const int RING_CENTER_OFFSET_Y = 0;         // Ring center offset from image center
+
+// Safety check rectangles (must be pure black for first condition)
+const int SAFETY_RECT1_X = 63;              // Rectangle 1 top-left X
+const int SAFETY_RECT1_Y = 79;              // Rectangle 1 top-left Y
+const int SAFETY_RECT1_WIDTH = 60;         // Rectangle 1 width
+const int SAFETY_RECT1_HEIGHT = 6;          // Rectangle 1 height
+const int SAFETY_RECT2_X = 63;              // Rectangle 2 top-left X
+const int SAFETY_RECT2_Y = 103;             // Rectangle 2 top-left Y
+const int SAFETY_RECT2_WIDTH = 60;         // Rectangle 2 width
+const int SAFETY_RECT2_HEIGHT = 4;          // Rectangle 2 height
+
+// Detection thresholds
+const int MIN_WHITE_PIXELS = 20;            // Minimum white pixels in connected group to trigger first condition
 const int MIN_RED_PIXELS = 2;               // Minimum red pixels to trigger second condition
 const int TIMER_DURATION_MS = 1200;         // Timer duration in milliseconds
 const int RESET_DELAY_MS = 200;            // Delay after condition reset
-const BYTE RED_THRESHOLD = 50;              // Red channel threshold (0-255)
+
+// Color thresholds (0-255)
+const BYTE WHITE_THRESHOLD = 0xFE;          // White pixel threshold (254)
+const BYTE RED_THRESHOLD = 50;              // Red channel threshold
 const BYTE OTHER_CHANNEL_MAX = 150;         // Max value for green/blue when checking red
 const BYTE RED_DOMINANCE = 20;              // Red must be this much higher than other channels
-const BYTE WHITE_THRESHOLD = 0xFE;          // White pixel threshold (254)
+
+// Key press settings
+const int SPACE_PRESS_MIN_MS = 50;          // Minimum SPACE key press duration
+const int SPACE_PRESS_MAX_MS = 100;         // Maximum SPACE key press duration
 
 bool saveEnabled = true;
 std::mutex saveMutex;                       // Mutex for thread-safe file operations
 
-// Simulate SPACE key press for random duration between 80-150ms
+// Simulate SPACE key press for random duration between min-max ms
 void PressSpaceKey() {
     // Random number generator
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_int_distribution<> dis(80, 150);
+    std::uniform_int_distribution<> dis(SPACE_PRESS_MIN_MS, SPACE_PRESS_MAX_MS);
     int pressDuration = dis(gen);
     
     // Prepare input structure for key down
@@ -77,9 +97,9 @@ void SaveBitmapWithHighlights(const char* filename, BYTE* originalBits, int widt
     memcpy(bits, originalBits, bmpSize);
     
     // Mark safety rectangles in BLUE (FF 00 00)
-    // Rectangle 1: (40, 79) size 107x4
-    for (int y = 79; y < 79 + 4; y++) {
-        for (int x = 40; x < 40 + 107; x++) {
+    // Rectangle 1
+    for (int y = SAFETY_RECT1_Y; y < SAFETY_RECT1_Y + SAFETY_RECT1_HEIGHT; y++) {
+        for (int x = SAFETY_RECT1_X; x < SAFETY_RECT1_X + SAFETY_RECT1_WIDTH; x++) {
             if (x >= 0 && x < width && y >= 0 && y < height) {
                 int index = y * rowSize + x * 3;
                 bits[index + 0] = 0xFF;  // B
@@ -88,9 +108,9 @@ void SaveBitmapWithHighlights(const char* filename, BYTE* originalBits, int widt
             }
         }
     }
-    // Rectangle 2: (40, 101) size 107x6
-    for (int y = 101; y < 101 + 6; y++) {
-        for (int x = 40; x < 40 + 107; x++) {
+    // Rectangle 2
+    for (int y = SAFETY_RECT2_Y; y < SAFETY_RECT2_Y + SAFETY_RECT2_HEIGHT; y++) {
+        for (int x = SAFETY_RECT2_X; x < SAFETY_RECT2_X + SAFETY_RECT2_WIDTH; x++) {
             if (x >= 0 && x < width && y >= 0 && y < height) {
                 int index = y * rowSize + x * 3;
                 bits[index + 0] = 0xFF;  // B
@@ -298,8 +318,8 @@ bool CaptureAndProcess(int size, int posX, int posY,
     GetDIBits(hMem, hBitmap, 0, size, buf, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
 
     int rowSize = ((size * 3 + 3) / 4) * 4;
-    int centerX = size / 2 - 1;  // Offset 1 pixel to the left
-    int centerY = size / 2;
+    int centerX = size / 2 + RING_CENTER_OFFSET_X;
+    int centerY = size / 2 + RING_CENTER_OFFSET_Y;
 
     // Stage 1: Looking for white pixels in ring
     if (!firstCondition) {
@@ -307,10 +327,10 @@ bool CaptureAndProcess(int size, int posX, int posY,
         redPixels.clear();
         
         // Safety check: Two rectangles must be pure black
-        // Rectangle 1: top-left (40, 79), size 107x4
-        bool rect1Black = IsRectangleBlack(buf, size, 40, 79, 107, 4);
-        // Rectangle 2: top-left (40, 101), size 107x6
-        bool rect2Black = IsRectangleBlack(buf, size, 40, 101, 107, 6);
+        bool rect1Black = IsRectangleBlack(buf, size, SAFETY_RECT1_X, SAFETY_RECT1_Y, 
+                                           SAFETY_RECT1_WIDTH, SAFETY_RECT1_HEIGHT);
+        bool rect2Black = IsRectangleBlack(buf, size, SAFETY_RECT2_X, SAFETY_RECT2_Y, 
+                                           SAFETY_RECT2_WIDTH, SAFETY_RECT2_HEIGHT);
         
         // If rectangles are not black, skip this frame
         if (!rect1Black || !rect2Black) {
@@ -475,14 +495,20 @@ int main() {
               << " at position (" << CAPTURE_POS_X << ", " << CAPTURE_POS_Y << ")"
               << " @ " << fps << " FPS  mode=" << (proMode ? "pro" : "eco")
               << " save=" << (saveEnabled ? "yes" : "no") << "\n";
-    std::cout << "Safety check: Two black rectangles at (40,79) 107x4 and (40,101) 107x6\n";
-    std::cout << "Monitoring for white pixels (>=" << (int)WHITE_THRESHOLD << ") in ring "
-              << "(inner radius=" << RING_INNER_RADIUS << ", outer radius=" << RING_OUTER_RADIUS << ")...\n";
+    std::cout << "Safety check rectangles (must be black):\n";
+    std::cout << "  Rect1: (" << SAFETY_RECT1_X << "," << SAFETY_RECT1_Y << ") " 
+              << SAFETY_RECT1_WIDTH << "x" << SAFETY_RECT1_HEIGHT << "\n";
+    std::cout << "  Rect2: (" << SAFETY_RECT2_X << "," << SAFETY_RECT2_Y << ") " 
+              << SAFETY_RECT2_WIDTH << "x" << SAFETY_RECT2_HEIGHT << "\n";
+    std::cout << "Monitoring for white pixels (>=" << (int)WHITE_THRESHOLD << ") in ring:\n";
+    std::cout << "  Inner radius=" << RING_INNER_RADIUS << ", outer radius=" << RING_OUTER_RADIUS 
+              << ", offset=(" << RING_CENTER_OFFSET_X << "," << RING_CENTER_OFFSET_Y << ")\n";
     std::cout << "First condition: >= " << MIN_WHITE_PIXELS << " connected white pixels (must share sides)\n";
     std::cout << "Second condition: >= " << MIN_RED_PIXELS << " pixels with R>=" << (int)RED_THRESHOLD 
               << " AND G,B<" << (int)OTHER_CHANNEL_MAX 
               << " AND R>" << (int)RED_DOMINANCE << " more than G,B\n";
-    std::cout << "Timer: " << TIMER_DURATION_MS << "ms, Reset delay: " << RESET_DELAY_MS << "ms\n\n";
+    std::cout << "Timer: " << TIMER_DURATION_MS << "ms, Reset delay: " << RESET_DELAY_MS << "ms\n";
+    std::cout << "SPACE key press: " << SPACE_PRESS_MIN_MS << "-" << SPACE_PRESS_MAX_MS << "ms\n\n";
 
     // Main loop variables
     std::vector<PixelPos> whitePixels;
