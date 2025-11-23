@@ -1,28 +1,73 @@
+// Compile with: g++ -O3 -std=c++11 main.cpp -o screenshot.exe -lgdi32
+// This optimizes the code for maximum performance
+
 #include <windows.h>
 #include <iostream>
 #include <string>
 #include <vector>
 #include <cmath>
+#include <thread>
+#include <mutex>
 
+// Configuration constants
+const int CAPTURE_SIZE = 186;               // Size of screenshot in pixels
+const int CAPTURE_POS_X = 1187;             // X position of capture area
+const int CAPTURE_POS_Y = 607;              // Y position of capture area
+const double RING_OUTER_RADIUS = 89.0;      // Outer ring radius in pixels
+const double RING_INNER_RADIUS = 85.0;      // Inner ring radius in pixels
+const int MIN_WHITE_PIXELS = 16;            // Minimum white pixels to trigger first condition
+const int MIN_RED_PIXELS = 2;               // Minimum red pixels to trigger second condition
+const int TIMER_DURATION_MS = 1200;         // Timer duration in milliseconds
+const int RESET_DELAY_MS = 1000;            // Delay after condition reset
+const BYTE RED_THRESHOLD = 50;              // Red channel threshold (0-255)
+const BYTE OTHER_CHANNEL_MAX = 150;         // Max value for green/blue when checking red
+const BYTE RED_DOMINANCE = 20;              // Red must be this much higher than other channels
+const BYTE WHITE_THRESHOLD = 0xFE;          // White pixel threshold (254)
+
+bool saveEnabled = false;
+std::mutex saveMutex;                       // Mutex for thread-safe file operations
+
+// Structure to hold pixel coordinates
 struct PixelPos {
     int x, y;
 };
 
-bool saveEnabled = false;
-int savedFrameCount = 0;
-
-// State tracking
-bool firstCondition = false;
-bool secondCondition = false;
-std::vector<PixelPos> whitePixelPositions;
-DWORD firstConditionStartTime = 0;
-const DWORD DETECTION_TIMEOUT = 1200; // ms
-const DWORD RESET_DELAY = 500; // ms
-
-void SaveBitmapToFile(const char* filename, HBITMAP hBitmap, HDC hDC, int width, int height) {
-    BITMAP bmp;
-    GetObject(hBitmap, sizeof(BITMAP), &bmp);
-
+// Save bitmap to file with highlighted pixels
+// - whitePixels: pixels marked in pink (first condition)
+// - redPixels: pixels marked in yellow (second condition)
+void SaveBitmapWithHighlights(const char* filename, BYTE* originalBits, int width, int height,
+                               const std::vector<PixelPos>& whitePixels,
+                               const std::vector<PixelPos>& redPixels) {
+    std::lock_guard<std::mutex> lock(saveMutex);
+    
+    int rowSize = ((width * 3 + 3) / 4) * 4;
+    DWORD bmpSize = rowSize * height;
+    
+    // Copy original bits to modify
+    BYTE* bits = new BYTE[bmpSize];
+    memcpy(bits, originalBits, bmpSize);
+    
+    // Mark white pixels (first condition) in PINK (FF 00 FF)
+    for (const auto& pos : whitePixels) {
+        if (pos.x >= 0 && pos.x < width && pos.y >= 0 && pos.y < height) {
+            int index = pos.y * rowSize + pos.x * 3;
+            bits[index + 0] = 0xFF;  // B
+            bits[index + 1] = 0x00;  // G
+            bits[index + 2] = 0xFF;  // R
+        }
+    }
+    
+    // Mark red pixels (second condition) in YELLOW (00 FF FF)
+    for (const auto& pos : redPixels) {
+        if (pos.x >= 0 && pos.x < width && pos.y >= 0 && pos.y < height) {
+            int index = pos.y * rowSize + pos.x * 3;
+            bits[index + 0] = 0x00;  // B
+            bits[index + 1] = 0xFF;  // G
+            bits[index + 2] = 0xFF;  // R
+        }
+    }
+    
+    // Create BMP file
     BITMAPINFOHEADER bi = {0};
     bi.biSize = sizeof(BITMAPINFOHEADER);
     bi.biWidth = width;
@@ -30,12 +75,7 @@ void SaveBitmapToFile(const char* filename, HBITMAP hBitmap, HDC hDC, int width,
     bi.biPlanes = 1;
     bi.biBitCount = 24;
     bi.biCompression = BI_RGB;
-
-    DWORD bmpSize = ((width * 3 + 3) & ~3) * height;
-    BYTE* bits = new BYTE[bmpSize];
-
-    GetDIBits(hDC, hBitmap, 0, height, bits, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
-
+    
     HANDLE hFile = CreateFileA(filename, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile != INVALID_HANDLE_VALUE) {
         BITMAPFILEHEADER bfh = {0};
@@ -49,165 +89,188 @@ void SaveBitmapToFile(const char* filename, HBITMAP hBitmap, HDC hDC, int width,
         WriteFile(hFile, bits, bmpSize, &written, NULL);
         CloseHandle(hFile);
     }
-
+    
     delete[] bits;
 }
 
-// Check if pixel is in the ring (between inner radius 178 and outer radius 180)
-// Outlines don't count (strictly between, not inclusive)
-bool IsInRing(int x, int y, int centerX, int centerY) {
+// Check if pixel is within the ring area (between inner and outer radius)
+bool IsInRing(int x, int y, int centerX, int centerY, double innerRadius, double outerRadius) {
     double dx = x - centerX;
     double dy = y - centerY;
-    double dist = sqrt(dx * dx + dy * dy);
-    
-    // Ring between radius 178 and 180 (exclusive of boundaries)
-    return dist > 89.0 && dist < 92.0;
+    double distSq = dx * dx + dy * dy;
+    double innerSq = innerRadius * innerRadius;
+    double outerSq = outerRadius * outerRadius;
+    return distSq > innerSq && distSq < outerSq;
 }
 
-// Check if pixel is white (at least 0xFE in all channels)
-bool IsWhitePixel(BYTE r, BYTE g, BYTE b) {
-    return r >= 0xFE && g >= 0xFE && b >= 0xFE;
+// Check if pixel is white-ish (all channels >= WHITE_THRESHOLD)
+bool IsWhiteish(BYTE r, BYTE g, BYTE b) {
+    return r >= WHITE_THRESHOLD && g >= WHITE_THRESHOLD && b >= WHITE_THRESHOLD;
 }
 
-// Find white pixels in the ring
-std::vector<PixelPos> FindWhitePixelsInRing(BYTE* lpBits, int width, int height) {
-    std::vector<PixelPos> positions;
-    int rowSize = ((width * 3 + 3) / 4) * 4;
-    int centerX = width / 2;
-    int centerY = height / 2;
+// Check if pixel is red (R >= RED_THRESHOLD, G and B < OTHER_CHANNEL_MAX, and R is RED_DOMINANCE higher than G and B)
+bool IsReddish(BYTE r, BYTE g, BYTE b) {
+    return r >= RED_THRESHOLD && 
+           g < OTHER_CHANNEL_MAX && 
+           b < OTHER_CHANNEL_MAX &&
+           r >= (g + RED_DOMINANCE) &&
+           r >= (b + RED_DOMINANCE);
+}
+
+// Main capture and processing function
+bool CaptureAndProcess(int size, int posX, int posY, 
+                       std::vector<PixelPos>& whitePixels,
+                       std::vector<PixelPos>& redPixels,
+                       bool& firstCondition, bool& secondCondition,
+                       LARGE_INTEGER& timerStart, LARGE_INTEGER freq) {
     
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            if (IsInRing(x, y, centerX, centerY)) {
-                BYTE b = lpBits[y * rowSize + x * 3 + 0];
-                BYTE g = lpBits[y * rowSize + x * 3 + 1];
-                BYTE r = lpBits[y * rowSize + x * 3 + 2];
-                
-                if (IsWhitePixel(r, g, b)) {
-                    positions.push_back({x, y});
-                }
-            }
-        }
+    // Get screen device context
+    HDC hScreen = GetDC(NULL);
+    HDC hMem = CreateCompatibleDC(hScreen);
+    HBITMAP hBitmap = CreateCompatibleBitmap(hScreen, size, size);
+    HBITMAP old = (HBITMAP)SelectObject(hMem, hBitmap);
+
+    // Capture screen region
+    bool ok = BitBlt(hMem, 0, 0, size, size, hScreen, posX, posY, SRCCOPY);
+
+    if (!ok) {
+        SelectObject(hMem, old);
+        DeleteObject(hBitmap);
+        DeleteDC(hMem);
+        ReleaseDC(NULL, hScreen);
+        return false;
     }
-    
-    return positions;
-}
 
-// Check if any remembered pixel has red channel >= 0xB0
-bool CheckRedThreshold(BYTE* lpBits, int width, int height, const std::vector<PixelPos>& positions) {
-    int rowSize = ((width * 3 + 3) / 4) * 4;
-    
-    for (const auto& pos : positions) {
-        if (pos.x >= 0 && pos.x < width && pos.y >= 0 && pos.y < height) {
-            BYTE r = lpBits[pos.y * rowSize + pos.x * 3 + 2];
-            if (r >= 0xB0) {
-                return true;
-            }
-        }
-    }
-    
-    return false;
-}
-
-void ProcessFrame(int width, int height, int posX, int posY, bool doSave, HDC hMem, HBITMAP hBitmap) {
-    BITMAP bmp;
-    GetObject(hBitmap, sizeof(BITMAP), &bmp);
-
+    // Get bitmap bits
     BITMAPINFOHEADER bi = {0};
     bi.biSize = sizeof(BITMAPINFOHEADER);
-    bi.biWidth = width;
-    bi.biHeight = height;
+    bi.biWidth = size;
+    bi.biHeight = size;
     bi.biPlanes = 1;
     bi.biBitCount = 24;
     bi.biCompression = BI_RGB;
 
-    DWORD sizeBytes = ((width * 3 + 3) & ~3) * height;
+    DWORD sizeBytes = ((size * 3 + 3) & ~3) * size;
     BYTE* buf = new BYTE[sizeBytes];
+    GetDIBits(hMem, hBitmap, 0, size, buf, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
 
-    GetDIBits(hMem, hBitmap, 0, height, buf, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+    int rowSize = ((size * 3 + 3) / 4) * 4;
+    int centerX = size / 2;
+    int centerY = size / 2;
 
-    DWORD currentTime = GetTickCount();
-
-    if (!firstCondition && !secondCondition) {
-        // Look for white pixels in the ring
-        std::vector<PixelPos> foundPixels = FindWhitePixelsInRing(buf, width, height);
+    // Stage 1: Looking for white pixels in ring
+    if (!firstCondition) {
+        whitePixels.clear();
+        redPixels.clear();
         
-        if (!foundPixels.empty()) {
-            // First condition triggered
-            firstCondition = true;
-            whitePixelPositions = foundPixels;
-            firstConditionStartTime = currentTime;
-        }
-    } else if (firstCondition && !secondCondition) {
-        // First condition is active, check for red threshold
-        DWORD elapsed = currentTime - firstConditionStartTime;
-        
-        if (elapsed <= DETECTION_TIMEOUT) {
-            if (CheckRedThreshold(buf, width, height, whitePixelPositions)) {
-                // Second condition triggered!
-                secondCondition = true;
-                savedFrameCount = 0;
-                std::cout << "DETECTED - Starting capture sequence\n";
+        // Scan all pixels in the ring area
+        for (int y = 0; y < size; y++) {
+            for (int x = 0; x < size; x++) {
+                if (IsInRing(x, y, centerX, centerY, RING_INNER_RADIUS, RING_OUTER_RADIUS)) {
+                    BYTE b = buf[y * rowSize + x * 3 + 0];
+                    BYTE g = buf[y * rowSize + x * 3 + 1];
+                    BYTE r = buf[y * rowSize + x * 3 + 2];
+                    
+                    if (IsWhiteish(r, g, b)) {
+                        PixelPos pos;
+                        pos.x = x;
+                        pos.y = y;
+                        whitePixels.push_back(pos);
+                    }
+                }
             }
-        } else {
-            // Timeout - no red threshold detected within 1200ms
-            Sleep(RESET_DELAY);
-            firstCondition = false;
-            whitePixelPositions.clear();
-        }
-    } else if (secondCondition) {
-        // Second condition is active - save frames and output
-        std::cout << "DETECTED - Frame " << (savedFrameCount + 1) << "\n";
-        
-        // Save if enabled and under limit
-        if (doSave && savedFrameCount < 100) {
-            char filename[64];
-            sprintf(filename, "detect_%03d.bmp", savedFrameCount + 1);
-            SaveBitmapToFile(filename, hBitmap, hMem, width, height);
-            savedFrameCount++;
         }
         
-        // Check if we should stop (reached 100 frames or timeout)
-        if (savedFrameCount >= 100 || (currentTime - firstConditionStartTime) > DETECTION_TIMEOUT + 500) {
-            std::cout << "Capture sequence complete - " << savedFrameCount << " frames saved\n";
-            Sleep(RESET_DELAY);
+        // First condition: at least MIN_WHITE_PIXELS white pixels found
+        if (whitePixels.size() >= MIN_WHITE_PIXELS) {
+            firstCondition = true;
+            QueryPerformanceCounter(&timerStart);
+        }
+    }
+    // Stage 2: Check if remembered pixels turn red
+    else {
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        double elapsed = (now.QuadPart - timerStart.QuadPart) * 1000.0 / freq.QuadPart;
+        
+        // Timeout - reset and wait
+        if (elapsed >= TIMER_DURATION_MS) {
             firstCondition = false;
-            secondCondition = false;
-            whitePixelPositions.clear();
-            savedFrameCount = 0;
+            whitePixels.clear();
+            redPixels.clear();
+            delete[] buf;
+            SelectObject(hMem, old);
+            DeleteObject(hBitmap);
+            DeleteDC(hMem);
+            ReleaseDC(NULL, hScreen);
+            Sleep(RESET_DELAY_MS);
+            return false;
+        }
+        
+        // Check if remembered pixels have turned red
+        redPixels.clear();
+        for (const auto& pos : whitePixels) {
+            int x = pos.x;
+            int y = pos.y;
+            if (x >= 0 && x < size && y >= 0 && y < size) {
+                BYTE b = buf[y * rowSize + x * 3 + 0];
+                BYTE g = buf[y * rowSize + x * 3 + 1];
+                BYTE r = buf[y * rowSize + x * 3 + 2];
+                
+                if (IsReddish(r, g, b)) {
+                    redPixels.push_back(pos);
+                }
+            }
+        }
+        
+        // Second condition: at least MIN_RED_PIXELS turned red
+        if (redPixels.size() >= MIN_RED_PIXELS) {
+            secondCondition = true;
+            
+            // Save image in separate thread if enabled
+            if (saveEnabled) {
+                // Copy buffer for thread
+                BYTE* bufCopy = new BYTE[sizeBytes];
+                memcpy(bufCopy, buf, sizeBytes);
+                
+                // Copy vectors for thread
+                std::vector<PixelPos> whiteCopy = whitePixels;
+                std::vector<PixelPos> redCopy = redPixels;
+                
+                // Launch save thread
+                std::thread saveThread([bufCopy, size, whiteCopy, redCopy]() {
+                    SaveBitmapWithHighlights("output.bmp", bufCopy, size, size, whiteCopy, redCopy);
+                    delete[] bufCopy;
+                });
+                saveThread.detach(); // Run independently
+            }
         }
     }
 
+    // Cleanup
     delete[] buf;
+    SelectObject(hMem, old);
+    DeleteObject(hBitmap);
+    DeleteDC(hMem);
+    ReleaseDC(NULL, hScreen);
+    
+    return secondCondition;
 }
 
 int main() {
     SetProcessDPIAware();
 
     int fps = 90;
-    int size = 362; // Default large enough to contain ring (radius 180 * 2 + margin)
-    int posX = 1187;
-    int posY = 607;
     int pro = 1;
 
-    std::cout << "Press Enter for defaults or type anything to adjust parameters: ";
-    std::string s;
-    std::getline(std::cin, s);
-
-    if (!s.empty()) {
-        std::cout << "fps (default 90): ";
-        std::cin >> fps;
-        std::cout << "size (default 362): ";
-        std::cin >> size;
-        std::cout << "position X (default 1187): ";
-        std::cin >> posX;
-        std::cout << "position Y (default 607): ";
-        std::cin >> posY;
-        std::cout << "pro mode? (1=yes, 0=no, default 1): ";
-        std::cin >> pro;
-        std::cout << "save file? (1=yes, 0=no, default 0): ";
-        std::cin >> saveEnabled;
-    }
+    // Get configuration from user
+    std::cout << "Configuration:\n";
+    std::cout << "fps (default " << fps << "): ";
+    std::cin >> fps;
+    std::cout << "pro mode? (1=yes, 0=no, default " << pro << "): ";
+    std::cin >> pro;
+    std::cout << "save file? (1=yes, 0=no, default " << (saveEnabled ? 1 : 0) << "): ";
+    std::cin >> saveEnabled;
 
     bool proMode = (pro != 0);
     double frameDelay = 1000.0 / fps;
@@ -215,49 +278,65 @@ int main() {
     LARGE_INTEGER freq;
     QueryPerformanceFrequency(&freq);
 
-    std::cout << "\nStart capture: " << size << "x" << size
-              << " at position (" << posX << ", " << posY << ")"
+    // Display configuration
+    std::cout << "\nStart capture: " << CAPTURE_SIZE << "x" << CAPTURE_SIZE
+              << " at position (" << CAPTURE_POS_X << ", " << CAPTURE_POS_Y << ")"
               << " @ " << fps << " FPS  mode=" << (proMode ? "pro" : "eco")
               << " save=" << (saveEnabled ? "yes" : "no") << "\n";
-    std::cout << "Monitoring ring (radius 178-180 pixels) for white pixels (>=FE)...\n";
-    std::cout << "Detection: white pixels -> wait for red channel >=B0 within 1200ms\n\n";
+    std::cout << "Monitoring for white pixels (>=" << (int)WHITE_THRESHOLD << ") in ring "
+              << "(inner radius=" << RING_INNER_RADIUS << ", outer radius=" << RING_OUTER_RADIUS << ")...\n";
+    std::cout << "First condition: >= " << MIN_WHITE_PIXELS << " white pixels\n";
+    std::cout << "Second condition: >= " << MIN_RED_PIXELS << " pixels with R>=" << (int)RED_THRESHOLD 
+              << " AND G,B<" << (int)OTHER_CHANNEL_MAX 
+              << " AND R>" << (int)RED_DOMINANCE << " more than G,B\n";
+    std::cout << "Timer: " << TIMER_DURATION_MS << "ms, Reset delay: " << RESET_DELAY_MS << "ms\n\n";
 
+    // Main loop variables
+    std::vector<PixelPos> whitePixels;
+    std::vector<PixelPos> redPixels;
+    bool firstCondition = false;
+    bool secondCondition = false;
+    LARGE_INTEGER timerStart;
+
+    // Main capture loop
     while (true) {
         LARGE_INTEGER frameStart;
         QueryPerformanceCounter(&frameStart);
 
-        HDC hScreen = GetDC(NULL);
-        HDC hMem = CreateCompatibleDC(hScreen);
-        HBITMAP hBitmap = CreateCompatibleBitmap(hScreen, size, size);
-        HBITMAP old = (HBITMAP)SelectObject(hMem, hBitmap);
+        // Process frame
+        bool result = CaptureAndProcess(CAPTURE_SIZE, CAPTURE_POS_X, CAPTURE_POS_Y, 
+                                       whitePixels, redPixels,
+                                       firstCondition, secondCondition,
+                                       timerStart, freq);
 
-        bool ok = BitBlt(hMem, 0, 0, size, size, hScreen, posX, posY, SRCCOPY);
-
-        if (ok) {
-            ProcessFrame(size, size, posX, posY, saveEnabled, hMem, hBitmap);
+        // Handle second condition trigger
+        if (secondCondition) {
+            std::cout << "SECOND CONDITION TRUE (detected " << redPixels.size() << " red pixels)\n";
+            
+            // Reset after delay
+            Sleep(RESET_DELAY_MS);
+            firstCondition = false;
+            secondCondition = false;
+            whitePixels.clear();
+            redPixels.clear();
         }
 
-        SelectObject(hMem, old);
-        DeleteObject(hBitmap);
-        DeleteDC(hMem);
-        ReleaseDC(NULL, hScreen);
-
+        // Frame rate control
         LARGE_INTEGER cur;
         QueryPerformanceCounter(&cur);
         double elapsed = (cur.QuadPart - frameStart.QuadPart) * 1000.0 / freq.QuadPart;
 
+        // Eco mode: use Sleep for most of the delay
         if (!proMode) {
             if (elapsed < frameDelay - 1)
                 Sleep((DWORD)(frameDelay - elapsed - 1));
         }
 
-        // busy wait for precise timing
+        // Busy wait for precise timing
         while (true) {
             QueryPerformanceCounter(&cur);
             if ((cur.QuadPart - frameStart.QuadPart) * 1000.0 / freq.QuadPart >= frameDelay)
                 break;
         }
     }
-
-    return 0;
 }
