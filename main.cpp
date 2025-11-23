@@ -16,7 +16,7 @@ const int CAPTURE_POS_X = 1187;             // X position of capture area
 const int CAPTURE_POS_Y = 607;              // Y position of capture area
 const double RING_OUTER_RADIUS = 89.0;      // Outer ring radius in pixels
 const double RING_INNER_RADIUS = 85.0;      // Inner ring radius in pixels
-const int MIN_WHITE_PIXELS = 30;            // Minimum white pixels to trigger first condition
+const int MIN_WHITE_PIXELS = 40;            // Minimum white pixels to trigger first condition
 const int MIN_RED_PIXELS = 2;               // Minimum red pixels to trigger second condition
 const int TIMER_DURATION_MS = 1200;         // Timer duration in milliseconds
 const int RESET_DELAY_MS = 200;            // Delay after condition reset
@@ -370,7 +370,7 @@ bool CaptureAndProcess(int size, int posX, int posY,
 int main() {
     SetProcessDPIAware();
 
-    int fps = 89;
+    int fps = 90;
     int pro = 1;
 
     // Get configuration from user
