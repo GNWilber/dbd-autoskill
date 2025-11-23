@@ -19,7 +19,7 @@ const double RING_INNER_RADIUS = 85.0;      // Inner ring radius in pixels
 const int MIN_WHITE_PIXELS = 30;            // Minimum white pixels to trigger first condition
 const int MIN_RED_PIXELS = 2;               // Minimum red pixels to trigger second condition
 const int TIMER_DURATION_MS = 1200;         // Timer duration in milliseconds
-const int RESET_DELAY_MS = 300;            // Delay after condition reset
+const int RESET_DELAY_MS = 200;            // Delay after condition reset
 const BYTE RED_THRESHOLD = 50;              // Red channel threshold (0-255)
 const BYTE OTHER_CHANNEL_MAX = 150;         // Max value for green/blue when checking red
 const BYTE RED_DOMINANCE = 20;              // Red must be this much higher than other channels
@@ -376,11 +376,25 @@ int main() {
     // Get configuration from user
     std::cout << "Configuration:\n";
     std::cout << "fps (default " << fps << "): ";
-    std::cin >> fps;
+    std::string fpsInput;
+    std::getline(std::cin, fpsInput);
+    if (!fpsInput.empty()) {
+        fps = std::stoi(fpsInput);
+    }
+    
     std::cout << "pro mode? (1=yes, 0=no, default " << pro << "): ";
-    std::cin >> pro;
+    std::string proInput;
+    std::getline(std::cin, proInput);
+    if (!proInput.empty()) {
+        pro = std::stoi(proInput);
+    }
+    
     std::cout << "save file? (1=yes, 0=no, default " << (saveEnabled ? 1 : 0) << "): ";
-    std::cin >> saveEnabled;
+    std::string saveInput;
+    std::getline(std::cin, saveInput);
+    if (!saveInput.empty()) {
+        saveEnabled = (std::stoi(saveInput) != 0);
+    }
 
     bool proMode = (pro != 0);
     double frameDelay = 1000.0 / fps;
