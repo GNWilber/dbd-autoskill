@@ -63,6 +63,7 @@ struct PixelPos {
 // Save bitmap to file with highlighted pixels
 // - whitePixels: pixels marked in pink (first condition)
 // - redPixels: pixels marked in yellow (second condition)
+// - safety rectangles: marked in blue
 void SaveBitmapWithHighlights(const char* filename, BYTE* originalBits, int width, int height,
                                const std::vector<PixelPos>& whitePixels,
                                const std::vector<PixelPos>& redPixels) {
@@ -74,6 +75,30 @@ void SaveBitmapWithHighlights(const char* filename, BYTE* originalBits, int widt
     // Copy original bits to modify
     BYTE* bits = new BYTE[bmpSize];
     memcpy(bits, originalBits, bmpSize);
+    
+    // Mark safety rectangles in BLUE (FF 00 00)
+    // Rectangle 1: (40, 79) size 107x4
+    for (int y = 79; y < 79 + 4; y++) {
+        for (int x = 40; x < 40 + 107; x++) {
+            if (x >= 0 && x < width && y >= 0 && y < height) {
+                int index = y * rowSize + x * 3;
+                bits[index + 0] = 0xFF;  // B
+                bits[index + 1] = 0x00;  // G
+                bits[index + 2] = 0x00;  // R
+            }
+        }
+    }
+    // Rectangle 2: (40, 101) size 107x6
+    for (int y = 101; y < 101 + 6; y++) {
+        for (int x = 40; x < 40 + 107; x++) {
+            if (x >= 0 && x < width && y >= 0 && y < height) {
+                int index = y * rowSize + x * 3;
+                bits[index + 0] = 0xFF;  // B
+                bits[index + 1] = 0x00;  // G
+                bits[index + 2] = 0x00;  // R
+            }
+        }
+    }
     
     // Mark white pixels (first condition) in PINK (FF 00 FF)
     for (const auto& pos : whitePixels) {
@@ -199,6 +224,33 @@ bool IsWhiteish(BYTE r, BYTE g, BYTE b) {
     return r >= WHITE_THRESHOLD && g >= WHITE_THRESHOLD && b >= WHITE_THRESHOLD;
 }
 
+// Check if pixel is pure black (all channels == 0)
+bool IsBlack(BYTE r, BYTE g, BYTE b) {
+    return r == 0 && g == 0 && b == 0;
+}
+
+// Check if rectangle area is completely black
+// Returns true if ALL pixels in the rectangle are black
+bool IsRectangleBlack(BYTE* buf, int bufWidth, int x, int y, int width, int height) {
+    int rowSize = ((bufWidth * 3 + 3) / 4) * 4;
+    
+    for (int py = y; py < y + height; py++) {
+        for (int px = x; px < x + width; px++) {
+            if (px >= 0 && px < bufWidth && py >= 0) {
+                int index = py * rowSize + px * 3;
+                BYTE b = buf[index + 0];
+                BYTE g = buf[index + 1];
+                BYTE r = buf[index + 2];
+                
+                if (!IsBlack(r, g, b)) {
+                    return false; // Found non-black pixel
+                }
+            }
+        }
+    }
+    return true; // All pixels are black
+}
+
 // Check if pixel is red (R >= RED_THRESHOLD, G and B < OTHER_CHANNEL_MAX, and R is RED_DOMINANCE higher than G and B)
 bool IsReddish(BYTE r, BYTE g, BYTE b) {
     return r >= RED_THRESHOLD && 
@@ -253,6 +305,22 @@ bool CaptureAndProcess(int size, int posX, int posY,
     if (!firstCondition) {
         whitePixels.clear();
         redPixels.clear();
+        
+        // Safety check: Two rectangles must be pure black
+        // Rectangle 1: top-left (40, 79), size 107x4
+        bool rect1Black = IsRectangleBlack(buf, size, 40, 79, 107, 4);
+        // Rectangle 2: top-left (40, 101), size 107x6
+        bool rect2Black = IsRectangleBlack(buf, size, 40, 101, 107, 6);
+        
+        // If rectangles are not black, skip this frame
+        if (!rect1Black || !rect2Black) {
+            delete[] buf;
+            SelectObject(hMem, old);
+            DeleteObject(hBitmap);
+            DeleteDC(hMem);
+            ReleaseDC(NULL, hScreen);
+            return false;
+        }
         
         std::vector<PixelPos> candidatePixels;
         
@@ -407,6 +475,7 @@ int main() {
               << " at position (" << CAPTURE_POS_X << ", " << CAPTURE_POS_Y << ")"
               << " @ " << fps << " FPS  mode=" << (proMode ? "pro" : "eco")
               << " save=" << (saveEnabled ? "yes" : "no") << "\n";
+    std::cout << "Safety check: Two black rectangles at (40,79) 107x4 and (40,101) 107x6\n";
     std::cout << "Monitoring for white pixels (>=" << (int)WHITE_THRESHOLD << ") in ring "
               << "(inner radius=" << RING_INNER_RADIUS << ", outer radius=" << RING_OUTER_RADIUS << ")...\n";
     std::cout << "First condition: >= " << MIN_WHITE_PIXELS << " connected white pixels (must share sides)\n";
