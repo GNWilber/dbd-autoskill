@@ -1,4 +1,5 @@
 // Compile with: g++ -O3 -std=c++11 main.cpp -o screenshot.exe -lgdi32
+// This optimizes the code for maximum performance
 
 #include <windows.h>
 #include <iostream>
@@ -9,36 +10,30 @@
 #include <mutex>
 #include <random>
 
-// ============================================================================
-// CONFIGURATION - All adjustable values in one place
-// ============================================================================
-
-// Capture settings
+// Configuration constants - Easy to modify
 const int CAPTURE_SIZE = 186;               // Size of screenshot in pixels
 const int CAPTURE_POS_X = 1187;             // X position of capture area
 const int CAPTURE_POS_Y = 607;              // Y position of capture area
-
-// Ring detection settings
 const double RING_OUTER_RADIUS = 89.0;      // Outer ring radius in pixels
 const double RING_INNER_RADIUS = 85.0;      // Inner ring radius in pixels
 const int RING_CENTER_OFFSET_X = -1;        // Ring center offset from image center (negative = left)
 const int RING_CENTER_OFFSET_Y = 0;         // Ring center offset from image center
 
 // Safety check rectangles (must be pure black for first condition)
-const int SAFETY_RECT1_X = 40;              // Rectangle 1 top-left X
+const int SAFETY_RECT1_X = 63;              // Rectangle 1 top-left X
 const int SAFETY_RECT1_Y = 79;              // Rectangle 1 top-left Y
-const int SAFETY_RECT1_WIDTH = 107;         // Rectangle 1 width
-const int SAFETY_RECT1_HEIGHT = 4;          // Rectangle 1 height
-const int SAFETY_RECT2_X = 40;              // Rectangle 2 top-left X
-const int SAFETY_RECT2_Y = 101;             // Rectangle 2 top-left Y
-const int SAFETY_RECT2_WIDTH = 107;         // Rectangle 2 width
-const int SAFETY_RECT2_HEIGHT = 6;          // Rectangle 2 height
+const int SAFETY_RECT1_WIDTH = 60;         // Rectangle 1 width
+const int SAFETY_RECT1_HEIGHT = 6;          // Rectangle 1 height
+const int SAFETY_RECT2_X = 63;              // Rectangle 2 top-left X
+const int SAFETY_RECT2_Y = 103;             // Rectangle 2 top-left Y
+const int SAFETY_RECT2_WIDTH = 60;         // Rectangle 2 width
+const int SAFETY_RECT2_HEIGHT = 4;          // Rectangle 2 height
 
 // Detection thresholds
-const int MIN_WHITE_PIXELS = 16;            // Minimum white pixels in connected group
+const int MIN_WHITE_PIXELS = 20;            // Minimum white pixels in connected group to trigger first condition
 const int MIN_RED_PIXELS = 2;               // Minimum red pixels to trigger second condition
 const int TIMER_DURATION_MS = 1200;         // Timer duration in milliseconds
-const int RESET_DELAY_MS = 1000;            // Delay after condition reset
+const int RESET_DELAY_MS = 200;            // Delay after condition reset
 
 // Color thresholds (0-255)
 const BYTE WHITE_THRESHOLD = 0xFE;          // White pixel threshold (254)
@@ -47,48 +42,48 @@ const BYTE OTHER_CHANNEL_MAX = 150;         // Max value for green/blue when che
 const BYTE RED_DOMINANCE = 20;              // Red must be this much higher than other channels
 
 // Key press settings
-const int SPACE_PRESS_MIN_MS = 80;          // Minimum SPACE key press duration
-const int SPACE_PRESS_MAX_MS = 150;         // Maximum SPACE key press duration
+const int SPACE_PRESS_MIN_MS = 50;          // Minimum SPACE key press duration
+const int SPACE_PRESS_MAX_MS = 100;         // Maximum SPACE key press duration
 
-// ============================================================================
-// GLOBALS
-// ============================================================================
+bool saveEnabled = true;
+std::mutex saveMutex;                       // Mutex for thread-safe file operations
 
-bool saveEnabled = false;
-std::mutex saveMutex;
-
-// ============================================================================
-// STRUCTURES
-// ============================================================================
-
-struct PixelPos {
-    int x, y;
-};
-
-// ============================================================================
-// UTILITY FUNCTIONS
-// ============================================================================
-
-// Simulate SPACE key press for random duration
+// Simulate SPACE key press for random duration between min-max ms
 void PressSpaceKey() {
+    // Random number generator
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<> dis(SPACE_PRESS_MIN_MS, SPACE_PRESS_MAX_MS);
     int pressDuration = dis(gen);
     
+    // Prepare input structure for key down
     INPUT input = {0};
     input.type = INPUT_KEYBOARD;
     input.ki.wVk = VK_SPACE;
-    input.ki.dwFlags = 0;
+    input.ki.dwFlags = 0; // 0 for key press
     
+    // Send key down
     SendInput(1, &input, sizeof(INPUT));
+    
+    // Hold for random duration
     Sleep(pressDuration);
     
+    // Prepare input structure for key up
     input.ki.dwFlags = KEYEVENTF_KEYUP;
+    
+    // Send key up
     SendInput(1, &input, sizeof(INPUT));
 }
 
-// Save bitmap with highlighted pixels
+// Structure to hold pixel coordinates
+struct PixelPos {
+    int x, y;
+};
+
+// Save bitmap to file with highlighted pixels
+// - whitePixels: pixels marked in pink (first condition)
+// - redPixels: pixels marked in yellow (second condition)
+// - safety rectangles: marked in blue
 void SaveBitmapWithHighlights(const char* filename, BYTE* originalBits, int width, int height,
                                const std::vector<PixelPos>& whitePixels,
                                const std::vector<PixelPos>& redPixels) {
@@ -97,43 +92,55 @@ void SaveBitmapWithHighlights(const char* filename, BYTE* originalBits, int widt
     int rowSize = ((width * 3 + 3) / 4) * 4;
     DWORD bmpSize = rowSize * height;
     
+    // Copy original bits to modify
     BYTE* bits = new BYTE[bmpSize];
     memcpy(bits, originalBits, bmpSize);
     
     // Mark safety rectangles in BLUE (FF 00 00)
+    // Rectangle 1
     for (int y = SAFETY_RECT1_Y; y < SAFETY_RECT1_Y + SAFETY_RECT1_HEIGHT; y++) {
         for (int x = SAFETY_RECT1_X; x < SAFETY_RECT1_X + SAFETY_RECT1_WIDTH; x++) {
             if (x >= 0 && x < width && y >= 0 && y < height) {
                 int index = y * rowSize + x * 3;
-                bits[index + 0] = 0xFF; bits[index + 1] = 0x00; bits[index + 2] = 0x00;
+                bits[index + 0] = 0xFF;  // B
+                bits[index + 1] = 0x00;  // G
+                bits[index + 2] = 0x00;  // R
             }
         }
     }
+    // Rectangle 2
     for (int y = SAFETY_RECT2_Y; y < SAFETY_RECT2_Y + SAFETY_RECT2_HEIGHT; y++) {
         for (int x = SAFETY_RECT2_X; x < SAFETY_RECT2_X + SAFETY_RECT2_WIDTH; x++) {
             if (x >= 0 && x < width && y >= 0 && y < height) {
                 int index = y * rowSize + x * 3;
-                bits[index + 0] = 0xFF; bits[index + 1] = 0x00; bits[index + 2] = 0x00;
+                bits[index + 0] = 0xFF;  // B
+                bits[index + 1] = 0x00;  // G
+                bits[index + 2] = 0x00;  // R
             }
         }
     }
     
-    // Mark white pixels in PINK (FF 00 FF)
+    // Mark white pixels (first condition) in PINK (FF 00 FF)
     for (const auto& pos : whitePixels) {
         if (pos.x >= 0 && pos.x < width && pos.y >= 0 && pos.y < height) {
             int index = pos.y * rowSize + pos.x * 3;
-            bits[index + 0] = 0xFF; bits[index + 1] = 0x00; bits[index + 2] = 0xFF;
+            bits[index + 0] = 0xFF;  // B
+            bits[index + 1] = 0x00;  // G
+            bits[index + 2] = 0xFF;  // R
         }
     }
     
-    // Mark red pixels in YELLOW (00 FF FF)
+    // Mark red pixels (second condition) in YELLOW (00 FF FF)
     for (const auto& pos : redPixels) {
         if (pos.x >= 0 && pos.x < width && pos.y >= 0 && pos.y < height) {
             int index = pos.y * rowSize + pos.x * 3;
-            bits[index + 0] = 0x00; bits[index + 1] = 0xFF; bits[index + 2] = 0xFF;
+            bits[index + 0] = 0x00;  // B
+            bits[index + 1] = 0xFF;  // G
+            bits[index + 2] = 0xFF;  // R
         }
     }
     
+    // Create BMP file
     BITMAPINFOHEADER bi = {0};
     bi.biSize = sizeof(BITMAPINFOHEADER);
     bi.biWidth = width;
@@ -160,12 +167,14 @@ void SaveBitmapWithHighlights(const char* filename, BYTE* originalBits, int widt
 }
 
 // Find connected groups of pixels using flood fill
+// Returns groups where each group has at least minSize pixels
 std::vector<std::vector<PixelPos>> FindConnectedGroups(
     const std::vector<PixelPos>& pixels, int width, int height, int minSize) {
     
     std::vector<std::vector<PixelPos>> groups;
     std::vector<bool> visited(pixels.size(), false);
     
+    // Create a map for quick lookup
     std::vector<std::vector<bool>> pixelMap(height, std::vector<bool>(width, false));
     for (const auto& p : pixels) {
         if (p.x >= 0 && p.x < width && p.y >= 0 && p.y < height) {
@@ -173,6 +182,7 @@ std::vector<std::vector<PixelPos>> FindConnectedGroups(
         }
     }
     
+    // Flood fill to find connected components
     for (size_t i = 0; i < pixels.size(); i++) {
         if (visited[i]) continue;
         
@@ -190,6 +200,7 @@ std::vector<std::vector<PixelPos>> FindConnectedGroups(
             PixelPos current = pixels[idx];
             group.push_back(current);
             
+            // Check 4 neighbors (up, down, left, right)
             int dx[] = {0, 0, -1, 1};
             int dy[] = {-1, 1, 0, 0};
             
@@ -198,6 +209,7 @@ std::vector<std::vector<PixelPos>> FindConnectedGroups(
                 int ny = current.y + dy[d];
                 
                 if (nx >= 0 && nx < width && ny >= 0 && ny < height && pixelMap[ny][nx]) {
+                    // Find this neighbor in the pixels list
                     for (size_t j = 0; j < pixels.size(); j++) {
                         if (!visited[j] && pixels[j].x == nx && pixels[j].y == ny) {
                             toVisit.push_back(j);
@@ -208,6 +220,7 @@ std::vector<std::vector<PixelPos>> FindConnectedGroups(
             }
         }
         
+        // Only keep groups with at least minSize pixels
         if (group.size() >= minSize) {
             groups.push_back(group);
         }
@@ -216,10 +229,7 @@ std::vector<std::vector<PixelPos>> FindConnectedGroups(
     return groups;
 }
 
-// ============================================================================
-// PIXEL CHECKING FUNCTIONS
-// ============================================================================
-
+// Check if pixel is within the ring area (between inner and outer radius)
 bool IsInRing(int x, int y, int centerX, int centerY, double innerRadius, double outerRadius) {
     double dx = x - centerX;
     double dy = y - centerY;
@@ -229,22 +239,18 @@ bool IsInRing(int x, int y, int centerX, int centerY, double innerRadius, double
     return distSq > innerSq && distSq < outerSq;
 }
 
+// Check if pixel is white-ish (all channels >= WHITE_THRESHOLD)
 bool IsWhiteish(BYTE r, BYTE g, BYTE b) {
     return r >= WHITE_THRESHOLD && g >= WHITE_THRESHOLD && b >= WHITE_THRESHOLD;
 }
 
+// Check if pixel is pure black (all channels == 0)
 bool IsBlack(BYTE r, BYTE g, BYTE b) {
     return r == 0 && g == 0 && b == 0;
 }
 
-bool IsReddish(BYTE r, BYTE g, BYTE b) {
-    return r >= RED_THRESHOLD && 
-           g < OTHER_CHANNEL_MAX && 
-           b < OTHER_CHANNEL_MAX &&
-           r >= (g + RED_DOMINANCE) &&
-           r >= (b + RED_DOMINANCE);
-}
-
+// Check if rectangle area is completely black
+// Returns true if ALL pixels in the rectangle are black
 bool IsRectangleBlack(BYTE* buf, int bufWidth, int x, int y, int width, int height) {
     int rowSize = ((bufWidth * 3 + 3) / 4) * 4;
     
@@ -257,29 +263,37 @@ bool IsRectangleBlack(BYTE* buf, int bufWidth, int x, int y, int width, int heig
                 BYTE r = buf[index + 2];
                 
                 if (!IsBlack(r, g, b)) {
-                    return false;
+                    return false; // Found non-black pixel
                 }
             }
         }
     }
-    return true;
+    return true; // All pixels are black
 }
 
-// ============================================================================
-// MAIN CAPTURE AND PROCESSING
-// ============================================================================
+// Check if pixel is red (R >= RED_THRESHOLD, G and B < OTHER_CHANNEL_MAX, and R is RED_DOMINANCE higher than G and B)
+bool IsReddish(BYTE r, BYTE g, BYTE b) {
+    return r >= RED_THRESHOLD && 
+           g < OTHER_CHANNEL_MAX && 
+           b < OTHER_CHANNEL_MAX &&
+           r >= (g + RED_DOMINANCE) &&
+           r >= (b + RED_DOMINANCE);
+}
 
+// Main capture and processing function
 bool CaptureAndProcess(int size, int posX, int posY, 
                        std::vector<PixelPos>& whitePixels,
                        std::vector<PixelPos>& redPixels,
                        bool& firstCondition, bool& secondCondition,
                        LARGE_INTEGER& timerStart, LARGE_INTEGER freq) {
     
+    // Get screen device context
     HDC hScreen = GetDC(NULL);
     HDC hMem = CreateCompatibleDC(hScreen);
     HBITMAP hBitmap = CreateCompatibleBitmap(hScreen, size, size);
     HBITMAP old = (HBITMAP)SelectObject(hMem, hBitmap);
 
+    // Capture screen region
     bool ok = BitBlt(hMem, 0, 0, size, size, hScreen, posX, posY, SRCCOPY);
 
     if (!ok) {
@@ -290,6 +304,7 @@ bool CaptureAndProcess(int size, int posX, int posY,
         return false;
     }
 
+    // Get bitmap bits
     BITMAPINFOHEADER bi = {0};
     bi.biSize = sizeof(BITMAPINFOHEADER);
     bi.biWidth = size;
@@ -306,16 +321,18 @@ bool CaptureAndProcess(int size, int posX, int posY,
     int centerX = size / 2 + RING_CENTER_OFFSET_X;
     int centerY = size / 2 + RING_CENTER_OFFSET_Y;
 
+    // Stage 1: Looking for white pixels in ring
     if (!firstCondition) {
         whitePixels.clear();
         redPixels.clear();
         
-        // Safety check: rectangles must be pure black
+        // Safety check: Two rectangles must be pure black
         bool rect1Black = IsRectangleBlack(buf, size, SAFETY_RECT1_X, SAFETY_RECT1_Y, 
                                            SAFETY_RECT1_WIDTH, SAFETY_RECT1_HEIGHT);
         bool rect2Black = IsRectangleBlack(buf, size, SAFETY_RECT2_X, SAFETY_RECT2_Y, 
                                            SAFETY_RECT2_WIDTH, SAFETY_RECT2_HEIGHT);
         
+        // If rectangles are not black, skip this frame
         if (!rect1Black || !rect2Black) {
             delete[] buf;
             SelectObject(hMem, old);
@@ -327,7 +344,7 @@ bool CaptureAndProcess(int size, int posX, int posY,
         
         std::vector<PixelPos> candidatePixels;
         
-        // Find white pixels in ring
+        // Scan all pixels in the ring area
         for (int y = 0; y < size; y++) {
             for (int x = 0; x < size; x++) {
                 if (IsInRing(x, y, centerX, centerY, RING_INNER_RADIUS, RING_OUTER_RADIUS)) {
@@ -345,26 +362,30 @@ bool CaptureAndProcess(int size, int posX, int posY,
             }
         }
         
-        // Find connected groups
+        // Find connected groups of white pixels
         std::vector<std::vector<PixelPos>> groups = 
             FindConnectedGroups(candidatePixels, size, size, MIN_WHITE_PIXELS);
         
+        // Add all pixels from valid groups to whitePixels
         for (const auto& group : groups) {
             for (const auto& pixel : group) {
                 whitePixels.push_back(pixel);
             }
         }
         
+        // First condition: at least one valid group found
         if (!whitePixels.empty()) {
             firstCondition = true;
             QueryPerformanceCounter(&timerStart);
         }
     }
+    // Stage 2: Check if remembered pixels turn red
     else {
         LARGE_INTEGER now;
         QueryPerformanceCounter(&now);
         double elapsed = (now.QuadPart - timerStart.QuadPart) * 1000.0 / freq.QuadPart;
         
+        // Timeout - reset and wait
         if (elapsed >= TIMER_DURATION_MS) {
             firstCondition = false;
             whitePixels.clear();
@@ -378,7 +399,7 @@ bool CaptureAndProcess(int size, int posX, int posY,
             return false;
         }
         
-        // Check if remembered pixels turned red
+        // Check if remembered pixels have turned red
         redPixels.clear();
         for (const auto& pos : whitePixels) {
             int x = pos.x;
@@ -394,6 +415,7 @@ bool CaptureAndProcess(int size, int posX, int posY,
             }
         }
         
+        // Second condition: at least MIN_RED_PIXELS turned red
         if (redPixels.size() >= MIN_RED_PIXELS) {
             secondCondition = true;
             
@@ -401,25 +423,29 @@ bool CaptureAndProcess(int size, int posX, int posY,
             std::thread spaceThread([]() {
                 PressSpaceKey();
             });
-            spaceThread.detach();
+            spaceThread.detach(); // Run independently
             
-            // Save image if enabled
+            // Save image in separate thread if enabled
             if (saveEnabled) {
+                // Copy buffer for thread
                 BYTE* bufCopy = new BYTE[sizeBytes];
                 memcpy(bufCopy, buf, sizeBytes);
                 
+                // Copy vectors for thread
                 std::vector<PixelPos> whiteCopy = whitePixels;
                 std::vector<PixelPos> redCopy = redPixels;
                 
+                // Launch save thread
                 std::thread saveThread([bufCopy, size, whiteCopy, redCopy]() {
                     SaveBitmapWithHighlights("output.bmp", bufCopy, size, size, whiteCopy, redCopy);
                     delete[] bufCopy;
                 });
-                saveThread.detach();
+                saveThread.detach(); // Run independently
             }
         }
     }
 
+    // Cleanup
     delete[] buf;
     SelectObject(hMem, old);
     DeleteObject(hBitmap);
@@ -429,21 +455,26 @@ bool CaptureAndProcess(int size, int posX, int posY,
     return secondCondition;
 }
 
-// ============================================================================
-// MAIN
-// ============================================================================
-
 int main() {
     SetProcessDPIAware();
 
     int fps = 90;
+    int pro = 1;
 
+    // Get configuration from user
     std::cout << "Configuration:\n";
     std::cout << "fps (default " << fps << "): ";
     std::string fpsInput;
     std::getline(std::cin, fpsInput);
     if (!fpsInput.empty()) {
         fps = std::stoi(fpsInput);
+    }
+    
+    std::cout << "pro mode? (1=yes, 0=no, default " << pro << "): ";
+    std::string proInput;
+    std::getline(std::cin, proInput);
+    if (!proInput.empty()) {
+        pro = std::stoi(proInput);
     }
     
     std::cout << "save file? (1=yes, 0=no, default " << (saveEnabled ? 1 : 0) << "): ";
@@ -453,45 +484,55 @@ int main() {
         saveEnabled = (std::stoi(saveInput) != 0);
     }
 
+    bool proMode = (pro != 0);
     double frameDelay = 1000.0 / fps;
 
     LARGE_INTEGER freq;
     QueryPerformanceFrequency(&freq);
 
-    std::cout << "\nCapture: " << CAPTURE_SIZE << "x" << CAPTURE_SIZE
-              << " at (" << CAPTURE_POS_X << "," << CAPTURE_POS_Y << ") @ " << fps << " FPS\n";
-    std::cout << "Safety rectangles (must be black):\n";
-    std::cout << "  R1: (" << SAFETY_RECT1_X << "," << SAFETY_RECT1_Y << ") " 
+    // Display configuration
+    std::cout << "\nStart capture: " << CAPTURE_SIZE << "x" << CAPTURE_SIZE
+              << " at position (" << CAPTURE_POS_X << ", " << CAPTURE_POS_Y << ")"
+              << " @ " << fps << " FPS  mode=" << (proMode ? "pro" : "eco")
+              << " save=" << (saveEnabled ? "yes" : "no") << "\n";
+    std::cout << "Safety check rectangles (must be black):\n";
+    std::cout << "  Rect1: (" << SAFETY_RECT1_X << "," << SAFETY_RECT1_Y << ") " 
               << SAFETY_RECT1_WIDTH << "x" << SAFETY_RECT1_HEIGHT << "\n";
-    std::cout << "  R2: (" << SAFETY_RECT2_X << "," << SAFETY_RECT2_Y << ") " 
+    std::cout << "  Rect2: (" << SAFETY_RECT2_X << "," << SAFETY_RECT2_Y << ") " 
               << SAFETY_RECT2_WIDTH << "x" << SAFETY_RECT2_HEIGHT << "\n";
-    std::cout << "Ring: inner=" << RING_INNER_RADIUS << " outer=" << RING_OUTER_RADIUS 
-              << " offset=(" << RING_CENTER_OFFSET_X << "," << RING_CENTER_OFFSET_Y << ")\n";
-    std::cout << "Conditions: white>=" << MIN_WHITE_PIXELS << " (connected), red>=" << MIN_RED_PIXELS << "\n";
-    std::cout << "Thresholds: white>=" << (int)WHITE_THRESHOLD << ", red>=" << (int)RED_THRESHOLD 
-              << ", other<" << (int)OTHER_CHANNEL_MAX << ", dominance=" << (int)RED_DOMINANCE << "\n";
-    std::cout << "Timing: timer=" << TIMER_DURATION_MS << "ms, reset=" << RESET_DELAY_MS 
-              << "ms, space=" << SPACE_PRESS_MIN_MS << "-" << SPACE_PRESS_MAX_MS << "ms\n";
-    std::cout << "Save: " << (saveEnabled ? "yes" : "no") << "\n\n";
+    std::cout << "Monitoring for white pixels (>=" << (int)WHITE_THRESHOLD << ") in ring:\n";
+    std::cout << "  Inner radius=" << RING_INNER_RADIUS << ", outer radius=" << RING_OUTER_RADIUS 
+              << ", offset=(" << RING_CENTER_OFFSET_X << "," << RING_CENTER_OFFSET_Y << ")\n";
+    std::cout << "First condition: >= " << MIN_WHITE_PIXELS << " connected white pixels (must share sides)\n";
+    std::cout << "Second condition: >= " << MIN_RED_PIXELS << " pixels with R>=" << (int)RED_THRESHOLD 
+              << " AND G,B<" << (int)OTHER_CHANNEL_MAX 
+              << " AND R>" << (int)RED_DOMINANCE << " more than G,B\n";
+    std::cout << "Timer: " << TIMER_DURATION_MS << "ms, Reset delay: " << RESET_DELAY_MS << "ms\n";
+    std::cout << "SPACE key press: " << SPACE_PRESS_MIN_MS << "-" << SPACE_PRESS_MAX_MS << "ms\n\n";
 
+    // Main loop variables
     std::vector<PixelPos> whitePixels;
     std::vector<PixelPos> redPixels;
     bool firstCondition = false;
     bool secondCondition = false;
     LARGE_INTEGER timerStart;
 
+    // Main capture loop
     while (true) {
         LARGE_INTEGER frameStart;
         QueryPerformanceCounter(&frameStart);
 
-        CaptureAndProcess(CAPTURE_SIZE, CAPTURE_POS_X, CAPTURE_POS_Y, 
-                         whitePixels, redPixels,
-                         firstCondition, secondCondition,
-                         timerStart, freq);
+        // Process frame
+        bool result = CaptureAndProcess(CAPTURE_SIZE, CAPTURE_POS_X, CAPTURE_POS_Y, 
+                                       whitePixels, redPixels,
+                                       firstCondition, secondCondition,
+                                       timerStart, freq);
 
+        // Handle second condition trigger
         if (secondCondition) {
             std::cout << "SECOND CONDITION TRUE (detected " << redPixels.size() << " red pixels)\n";
             
+            // Reset after delay
             Sleep(RESET_DELAY_MS);
             firstCondition = false;
             secondCondition = false;
@@ -499,9 +540,19 @@ int main() {
             redPixels.clear();
         }
 
-        // Precise frame timing with busy wait
+        // Frame rate control
+        LARGE_INTEGER cur;
+        QueryPerformanceCounter(&cur);
+        double elapsed = (cur.QuadPart - frameStart.QuadPart) * 1000.0 / freq.QuadPart;
+
+        // Eco mode: use Sleep for most of the delay
+        if (!proMode) {
+            if (elapsed < frameDelay - 1)
+                Sleep((DWORD)(frameDelay - elapsed - 1));
+        }
+
+        // Busy wait for precise timing
         while (true) {
-            LARGE_INTEGER cur;
             QueryPerformanceCounter(&cur);
             if ((cur.QuadPart - frameStart.QuadPart) * 1000.0 / freq.QuadPart >= frameDelay)
                 break;
