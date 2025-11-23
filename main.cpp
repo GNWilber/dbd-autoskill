@@ -476,6 +476,26 @@ bool CaptureAndProcess(int size, int posX, int posY,
             return false;
         }
         
+        // DOUBLE-CHECK: Verify safety rectangles are still black
+        bool rect1Black = IsRectangleBlack(buf, size, SAFETY_RECT1_X, SAFETY_RECT1_Y, 
+                                           SAFETY_RECT1_WIDTH, SAFETY_RECT1_HEIGHT);
+        bool rect2Black = IsRectangleBlack(buf, size, SAFETY_RECT2_X, SAFETY_RECT2_Y, 
+                                           SAFETY_RECT2_WIDTH, SAFETY_RECT2_HEIGHT);
+        
+        if (!rect1Black || !rect2Black) {
+            // Safety rectangles no longer black, reset condition
+            std::cout << "Safety check failed in second condition - resetting\n";
+            firstCondition = false;
+            whitePixels.clear();
+            redPixels.clear();
+            delete[] buf;
+            SelectObject(hMem, old);
+            DeleteObject(hBitmap);
+            DeleteDC(hMem);
+            ReleaseDC(NULL, hScreen);
+            return false;
+        }
+        
         redPixels.clear();
         for (const auto& pos : whitePixels) {
             int x = pos.x;
