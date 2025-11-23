@@ -15,7 +15,7 @@ const int CAPTURE_POS_X = 1187;             // X position of capture area
 const int CAPTURE_POS_Y = 607;              // Y position of capture area
 const double RING_OUTER_RADIUS = 89.0;      // Outer ring radius in pixels
 const double RING_INNER_RADIUS = 85.0;      // Inner ring radius in pixels
-const int MIN_WHITE_PIXELS = 16;            // Minimum white pixels to trigger first condition
+const int MIN_WHITE_PIXELS = 30;            // Minimum white pixels to trigger first condition
 const int MIN_RED_PIXELS = 2;               // Minimum red pixels to trigger second condition
 const int TIMER_DURATION_MS = 1200;         // Timer duration in milliseconds
 const int RESET_DELAY_MS = 1000;            // Delay after condition reset
@@ -93,6 +93,69 @@ void SaveBitmapWithHighlights(const char* filename, BYTE* originalBits, int widt
     delete[] bits;
 }
 
+// Find connected groups of pixels using flood fill
+// Returns groups where each group has at least minSize pixels
+std::vector<std::vector<PixelPos>> FindConnectedGroups(
+    const std::vector<PixelPos>& pixels, int width, int height, int minSize) {
+    
+    std::vector<std::vector<PixelPos>> groups;
+    std::vector<bool> visited(pixels.size(), false);
+    
+    // Create a map for quick lookup
+    std::vector<std::vector<bool>> pixelMap(height, std::vector<bool>(width, false));
+    for (const auto& p : pixels) {
+        if (p.x >= 0 && p.x < width && p.y >= 0 && p.y < height) {
+            pixelMap[p.y][p.x] = true;
+        }
+    }
+    
+    // Flood fill to find connected components
+    for (size_t i = 0; i < pixels.size(); i++) {
+        if (visited[i]) continue;
+        
+        std::vector<PixelPos> group;
+        std::vector<size_t> toVisit;
+        toVisit.push_back(i);
+        
+        while (!toVisit.empty()) {
+            size_t idx = toVisit.back();
+            toVisit.pop_back();
+            
+            if (visited[idx]) continue;
+            visited[idx] = true;
+            
+            PixelPos current = pixels[idx];
+            group.push_back(current);
+            
+            // Check 4 neighbors (up, down, left, right)
+            int dx[] = {0, 0, -1, 1};
+            int dy[] = {-1, 1, 0, 0};
+            
+            for (int d = 0; d < 4; d++) {
+                int nx = current.x + dx[d];
+                int ny = current.y + dy[d];
+                
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height && pixelMap[ny][nx]) {
+                    // Find this neighbor in the pixels list
+                    for (size_t j = 0; j < pixels.size(); j++) {
+                        if (!visited[j] && pixels[j].x == nx && pixels[j].y == ny) {
+                            toVisit.push_back(j);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Only keep groups with at least minSize pixels
+        if (group.size() >= minSize) {
+            groups.push_back(group);
+        }
+    }
+    
+    return groups;
+}
+
 // Check if pixel is within the ring area (between inner and outer radius)
 bool IsInRing(int x, int y, int centerX, int centerY, double innerRadius, double outerRadius) {
     double dx = x - centerX;
@@ -155,13 +218,15 @@ bool CaptureAndProcess(int size, int posX, int posY,
     GetDIBits(hMem, hBitmap, 0, size, buf, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
 
     int rowSize = ((size * 3 + 3) / 4) * 4;
-    int centerX = size / 2;
+    int centerX = size / 2 - 1;  // Offset 1 pixel to the left
     int centerY = size / 2;
 
     // Stage 1: Looking for white pixels in ring
     if (!firstCondition) {
         whitePixels.clear();
         redPixels.clear();
+        
+        std::vector<PixelPos> candidatePixels;
         
         // Scan all pixels in the ring area
         for (int y = 0; y < size; y++) {
@@ -175,14 +240,25 @@ bool CaptureAndProcess(int size, int posX, int posY,
                         PixelPos pos;
                         pos.x = x;
                         pos.y = y;
-                        whitePixels.push_back(pos);
+                        candidatePixels.push_back(pos);
                     }
                 }
             }
         }
         
-        // First condition: at least MIN_WHITE_PIXELS white pixels found
-        if (whitePixels.size() >= MIN_WHITE_PIXELS) {
+        // Find connected groups of white pixels
+        std::vector<std::vector<PixelPos>> groups = 
+            FindConnectedGroups(candidatePixels, size, size, MIN_WHITE_PIXELS);
+        
+        // Add all pixels from valid groups to whitePixels
+        for (const auto& group : groups) {
+            for (const auto& pixel : group) {
+                whitePixels.push_back(pixel);
+            }
+        }
+        
+        // First condition: at least one valid group found
+        if (!whitePixels.empty()) {
             firstCondition = true;
             QueryPerformanceCounter(&timerStart);
         }
