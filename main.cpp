@@ -8,54 +8,158 @@
 #include <thread>
 #include <mutex>
 #include <random>
+#include <fstream>
+#include <sstream>
 
 // ============================================================================
-// CONFIGURATION - All adjustable values in one place
+// DEFAULT CONFIGURATION - Used when creating new config.json
 // ============================================================================
 
 // Capture settings
-const int CAPTURE_SIZE = 186;               // Size of screenshot in pixels
-const int CAPTURE_POS_X = 1187;             // X position of capture area
-const int CAPTURE_POS_Y = 607;              // Y position of capture area
+int CAPTURE_SIZE = 186;
+int CAPTURE_POS_X = 1187;
+int CAPTURE_POS_Y = 607;
+int FPS = 90;
 
 // Ring detection settings
-const double RING_OUTER_RADIUS = 89.0;      // Outer ring radius in pixels
-const double RING_INNER_RADIUS = 85.0;      // Inner ring radius in pixels
-const int RING_CENTER_OFFSET_X = -1;        // Ring center offset from image center (negative = left)
-const int RING_CENTER_OFFSET_Y = 0;         // Ring center offset from image center
+double RING_OUTER_RADIUS = 89.0;
+double RING_INNER_RADIUS = 85.0;
+int RING_CENTER_OFFSET_X = -1;
+int RING_CENTER_OFFSET_Y = 0;
 
-// Safety check rectangles (must be pure black for first condition)
-const int SAFETY_RECT1_X = 40;              // Rectangle 1 top-left X
-const int SAFETY_RECT1_Y = 79;              // Rectangle 1 top-left Y
-const int SAFETY_RECT1_WIDTH = 107;         // Rectangle 1 width
-const int SAFETY_RECT1_HEIGHT = 4;          // Rectangle 1 height
-const int SAFETY_RECT2_X = 40;              // Rectangle 2 top-left X
-const int SAFETY_RECT2_Y = 101;             // Rectangle 2 top-left Y
-const int SAFETY_RECT2_WIDTH = 107;         // Rectangle 2 width
-const int SAFETY_RECT2_HEIGHT = 6;          // Rectangle 2 height
+// Safety check rectangles
+int SAFETY_RECT1_X = 63;
+int SAFETY_RECT1_Y = 79;
+int SAFETY_RECT1_WIDTH = 60;
+int SAFETY_RECT1_HEIGHT = 6;
+int SAFETY_RECT2_X = 63;
+int SAFETY_RECT2_Y = 103;
+int SAFETY_RECT2_WIDTH = 60;
+int SAFETY_RECT2_HEIGHT = 4;
 
 // Detection thresholds
-const int MIN_WHITE_PIXELS = 16;            // Minimum white pixels in connected group
-const int MIN_RED_PIXELS = 2;               // Minimum red pixels to trigger second condition
-const int TIMER_DURATION_MS = 1200;         // Timer duration in milliseconds
-const int RESET_DELAY_MS = 1000;            // Delay after condition reset
+int MIN_WHITE_PIXELS = 16;
+int MIN_RED_PIXELS = 2;
+int TIMER_DURATION_MS = 1200;
+int RESET_DELAY_MS = 100;
 
 // Color thresholds (0-255)
-const BYTE WHITE_THRESHOLD = 0xFE;          // White pixel threshold (254)
-const BYTE RED_THRESHOLD = 50;              // Red channel threshold
-const BYTE OTHER_CHANNEL_MAX = 150;         // Max value for green/blue when checking red
-const BYTE RED_DOMINANCE = 20;              // Red must be this much higher than other channels
+int WHITE_THRESHOLD = 0xFE;
+int RED_THRESHOLD = 50;
+int OTHER_CHANNEL_MAX = 150;
+int RED_DOMINANCE = 20;
 
 // Key press settings
-const int SPACE_PRESS_MIN_MS = 80;          // Minimum SPACE key press duration
-const int SPACE_PRESS_MAX_MS = 150;         // Maximum SPACE key press duration
+int SPACE_PRESS_MIN_MS = 50;
+int SPACE_PRESS_MAX_MS = 90;
+
+// Save settings
+bool SAVE_ENABLED = true;
 
 // ============================================================================
 // GLOBALS
 // ============================================================================
 
-bool saveEnabled = false;
 std::mutex saveMutex;
+
+// ============================================================================
+// JSON CONFIGURATION
+// ============================================================================
+
+void SaveConfigToJson(const char* filename) {
+    std::ofstream file(filename);
+    if (!file) {
+        std::cerr << "Failed to create config file\n";
+        return;
+    }
+    
+    file << "{\n";
+    file << "  \"capture_size\": " << CAPTURE_SIZE << ",\n";
+    file << "  \"capture_pos_x\": " << CAPTURE_POS_X << ",\n";
+    file << "  \"capture_pos_y\": " << CAPTURE_POS_Y << ",\n";
+    file << "  \"fps\": " << FPS << ",\n";
+    file << "  \"ring_outer_radius\": " << RING_OUTER_RADIUS << ",\n";
+    file << "  \"ring_inner_radius\": " << RING_INNER_RADIUS << ",\n";
+    file << "  \"ring_center_offset_x\": " << RING_CENTER_OFFSET_X << ",\n";
+    file << "  \"ring_center_offset_y\": " << RING_CENTER_OFFSET_Y << ",\n";
+    file << "  \"safety_rect1_x\": " << SAFETY_RECT1_X << ",\n";
+    file << "  \"safety_rect1_y\": " << SAFETY_RECT1_Y << ",\n";
+    file << "  \"safety_rect1_width\": " << SAFETY_RECT1_WIDTH << ",\n";
+    file << "  \"safety_rect1_height\": " << SAFETY_RECT1_HEIGHT << ",\n";
+    file << "  \"safety_rect2_x\": " << SAFETY_RECT2_X << ",\n";
+    file << "  \"safety_rect2_y\": " << SAFETY_RECT2_Y << ",\n";
+    file << "  \"safety_rect2_width\": " << SAFETY_RECT2_WIDTH << ",\n";
+    file << "  \"safety_rect2_height\": " << SAFETY_RECT2_HEIGHT << ",\n";
+    file << "  \"min_white_pixels\": " << MIN_WHITE_PIXELS << ",\n";
+    file << "  \"min_red_pixels\": " << MIN_RED_PIXELS << ",\n";
+    file << "  \"timer_duration_ms\": " << TIMER_DURATION_MS << ",\n";
+    file << "  \"reset_delay_ms\": " << RESET_DELAY_MS << ",\n";
+    file << "  \"white_threshold\": " << WHITE_THRESHOLD << ",\n";
+    file << "  \"red_threshold\": " << RED_THRESHOLD << ",\n";
+    file << "  \"other_channel_max\": " << OTHER_CHANNEL_MAX << ",\n";
+    file << "  \"red_dominance\": " << RED_DOMINANCE << ",\n";
+    file << "  \"space_press_min_ms\": " << SPACE_PRESS_MIN_MS << ",\n";
+    file << "  \"space_press_max_ms\": " << SPACE_PRESS_MAX_MS << ",\n";
+    file << "  \"save_enabled\": " << (SAVE_ENABLED ? "true" : "false") << "\n";
+    file << "}\n";
+    
+    file.close();
+    std::cout << "Configuration saved to " << filename << "\n";
+}
+
+std::string trim(const std::string& str) {
+    size_t first = str.find_first_not_of(" \t\n\r\"");
+    if (first == std::string::npos) return "";
+    size_t last = str.find_last_not_of(" \t\n\r\",");
+    return str.substr(first, (last - first + 1));
+}
+
+bool LoadConfigFromJson(const char* filename) {
+    std::ifstream file(filename);
+    if (!file) {
+        return false;
+    }
+    
+    std::string line;
+    while (std::getline(file, line)) {
+        size_t colon = line.find(':');
+        if (colon == std::string::npos) continue;
+        
+        std::string key = trim(line.substr(0, colon));
+        std::string value = trim(line.substr(colon + 1));
+        
+        if (key == "capture_size") CAPTURE_SIZE = std::stoi(value);
+        else if (key == "capture_pos_x") CAPTURE_POS_X = std::stoi(value);
+        else if (key == "capture_pos_y") CAPTURE_POS_Y = std::stoi(value);
+        else if (key == "fps") FPS = std::stoi(value);
+        else if (key == "ring_outer_radius") RING_OUTER_RADIUS = std::stod(value);
+        else if (key == "ring_inner_radius") RING_INNER_RADIUS = std::stod(value);
+        else if (key == "ring_center_offset_x") RING_CENTER_OFFSET_X = std::stoi(value);
+        else if (key == "ring_center_offset_y") RING_CENTER_OFFSET_Y = std::stoi(value);
+        else if (key == "safety_rect1_x") SAFETY_RECT1_X = std::stoi(value);
+        else if (key == "safety_rect1_y") SAFETY_RECT1_Y = std::stoi(value);
+        else if (key == "safety_rect1_width") SAFETY_RECT1_WIDTH = std::stoi(value);
+        else if (key == "safety_rect1_height") SAFETY_RECT1_HEIGHT = std::stoi(value);
+        else if (key == "safety_rect2_x") SAFETY_RECT2_X = std::stoi(value);
+        else if (key == "safety_rect2_y") SAFETY_RECT2_Y = std::stoi(value);
+        else if (key == "safety_rect2_width") SAFETY_RECT2_WIDTH = std::stoi(value);
+        else if (key == "safety_rect2_height") SAFETY_RECT2_HEIGHT = std::stoi(value);
+        else if (key == "min_white_pixels") MIN_WHITE_PIXELS = std::stoi(value);
+        else if (key == "min_red_pixels") MIN_RED_PIXELS = std::stoi(value);
+        else if (key == "timer_duration_ms") TIMER_DURATION_MS = std::stoi(value);
+        else if (key == "reset_delay_ms") RESET_DELAY_MS = std::stoi(value);
+        else if (key == "white_threshold") WHITE_THRESHOLD = std::stoi(value);
+        else if (key == "red_threshold") RED_THRESHOLD = std::stoi(value);
+        else if (key == "other_channel_max") OTHER_CHANNEL_MAX = std::stoi(value);
+        else if (key == "red_dominance") RED_DOMINANCE = std::stoi(value);
+        else if (key == "space_press_min_ms") SPACE_PRESS_MIN_MS = std::stoi(value);
+        else if (key == "space_press_max_ms") SPACE_PRESS_MAX_MS = std::stoi(value);
+        else if (key == "save_enabled") SAVE_ENABLED = (value == "true");
+    }
+    
+    file.close();
+    return true;
+}
 
 // ============================================================================
 // STRUCTURES
@@ -69,7 +173,6 @@ struct PixelPos {
 // UTILITY FUNCTIONS
 // ============================================================================
 
-// Simulate SPACE key press for random duration
 void PressSpaceKey() {
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -88,7 +191,6 @@ void PressSpaceKey() {
     SendInput(1, &input, sizeof(INPUT));
 }
 
-// Save bitmap with highlighted pixels
 void SaveBitmapWithHighlights(const char* filename, BYTE* originalBits, int width, int height,
                                const std::vector<PixelPos>& whitePixels,
                                const std::vector<PixelPos>& redPixels) {
@@ -100,7 +202,7 @@ void SaveBitmapWithHighlights(const char* filename, BYTE* originalBits, int widt
     BYTE* bits = new BYTE[bmpSize];
     memcpy(bits, originalBits, bmpSize);
     
-    // Mark safety rectangles in BLUE (FF 00 00)
+    // Mark safety rectangles in BLUE
     for (int y = SAFETY_RECT1_Y; y < SAFETY_RECT1_Y + SAFETY_RECT1_HEIGHT; y++) {
         for (int x = SAFETY_RECT1_X; x < SAFETY_RECT1_X + SAFETY_RECT1_WIDTH; x++) {
             if (x >= 0 && x < width && y >= 0 && y < height) {
@@ -118,7 +220,7 @@ void SaveBitmapWithHighlights(const char* filename, BYTE* originalBits, int widt
         }
     }
     
-    // Mark white pixels in PINK (FF 00 FF)
+    // Mark white pixels in PINK
     for (const auto& pos : whitePixels) {
         if (pos.x >= 0 && pos.x < width && pos.y >= 0 && pos.y < height) {
             int index = pos.y * rowSize + pos.x * 3;
@@ -126,7 +228,7 @@ void SaveBitmapWithHighlights(const char* filename, BYTE* originalBits, int widt
         }
     }
     
-    // Mark red pixels in YELLOW (00 FF FF)
+    // Mark red pixels in YELLOW
     for (const auto& pos : redPixels) {
         if (pos.x >= 0 && pos.x < width && pos.y >= 0 && pos.y < height) {
             int index = pos.y * rowSize + pos.x * 3;
@@ -159,7 +261,6 @@ void SaveBitmapWithHighlights(const char* filename, BYTE* originalBits, int widt
     delete[] bits;
 }
 
-// Find connected groups of pixels using flood fill
 std::vector<std::vector<PixelPos>> FindConnectedGroups(
     const std::vector<PixelPos>& pixels, int width, int height, int minSize) {
     
@@ -310,7 +411,6 @@ bool CaptureAndProcess(int size, int posX, int posY,
         whitePixels.clear();
         redPixels.clear();
         
-        // Safety check: rectangles must be pure black
         bool rect1Black = IsRectangleBlack(buf, size, SAFETY_RECT1_X, SAFETY_RECT1_Y, 
                                            SAFETY_RECT1_WIDTH, SAFETY_RECT1_HEIGHT);
         bool rect2Black = IsRectangleBlack(buf, size, SAFETY_RECT2_X, SAFETY_RECT2_Y, 
@@ -327,7 +427,6 @@ bool CaptureAndProcess(int size, int posX, int posY,
         
         std::vector<PixelPos> candidatePixels;
         
-        // Find white pixels in ring
         for (int y = 0; y < size; y++) {
             for (int x = 0; x < size; x++) {
                 if (IsInRing(x, y, centerX, centerY, RING_INNER_RADIUS, RING_OUTER_RADIUS)) {
@@ -345,7 +444,6 @@ bool CaptureAndProcess(int size, int posX, int posY,
             }
         }
         
-        // Find connected groups
         std::vector<std::vector<PixelPos>> groups = 
             FindConnectedGroups(candidatePixels, size, size, MIN_WHITE_PIXELS);
         
@@ -378,7 +476,6 @@ bool CaptureAndProcess(int size, int posX, int posY,
             return false;
         }
         
-        // Check if remembered pixels turned red
         redPixels.clear();
         for (const auto& pos : whitePixels) {
             int x = pos.x;
@@ -397,14 +494,12 @@ bool CaptureAndProcess(int size, int posX, int posY,
         if (redPixels.size() >= MIN_RED_PIXELS) {
             secondCondition = true;
             
-            // Press SPACE key in separate thread
             std::thread spaceThread([]() {
                 PressSpaceKey();
             });
             spaceThread.detach();
             
-            // Save image if enabled
-            if (saveEnabled) {
+            if (SAVE_ENABLED) {
                 BYTE* bufCopy = new BYTE[sizeBytes];
                 memcpy(bufCopy, buf, sizeBytes);
                 
@@ -436,30 +531,34 @@ bool CaptureAndProcess(int size, int posX, int posY,
 int main() {
     SetProcessDPIAware();
 
-    int fps = 90;
-
-    std::cout << "Configuration:\n";
-    std::cout << "fps (default " << fps << "): ";
-    std::string fpsInput;
-    std::getline(std::cin, fpsInput);
-    if (!fpsInput.empty()) {
-        fps = std::stoi(fpsInput);
-    }
+    const char* configFile = "config.json";
     
-    std::cout << "save file? (1=yes, 0=no, default " << (saveEnabled ? 1 : 0) << "): ";
-    std::string saveInput;
-    std::getline(std::cin, saveInput);
-    if (!saveInput.empty()) {
-        saveEnabled = (std::stoi(saveInput) != 0);
+    std::cout << "Press Enter to load config.json, or type anything to reset to defaults: ";
+    std::string input;
+    std::getline(std::cin, input);
+    
+    if (input.empty()) {
+        // Try to load config
+        if (LoadConfigFromJson(configFile)) {
+            std::cout << "Configuration loaded from " << configFile << "\n";
+        } else {
+            std::cout << "Config file not found, creating default " << configFile << "\n";
+            SaveConfigToJson(configFile);
+        }
+    } else {
+        // Reset to defaults
+        std::cout << "Resetting configuration to defaults...\n";
+        SaveConfigToJson(configFile);
     }
 
-    double frameDelay = 1000.0 / fps;
+    double frameDelay = 1000.0 / FPS;
 
     LARGE_INTEGER freq;
     QueryPerformanceFrequency(&freq);
 
-    std::cout << "\nCapture: " << CAPTURE_SIZE << "x" << CAPTURE_SIZE
-              << " at (" << CAPTURE_POS_X << "," << CAPTURE_POS_Y << ") @ " << fps << " FPS\n";
+    std::cout << "\n=== ACTIVE CONFIGURATION ===\n";
+    std::cout << "Capture: " << CAPTURE_SIZE << "x" << CAPTURE_SIZE
+              << " at (" << CAPTURE_POS_X << "," << CAPTURE_POS_Y << ") @ " << FPS << " FPS\n";
     std::cout << "Safety rectangles (must be black):\n";
     std::cout << "  R1: (" << SAFETY_RECT1_X << "," << SAFETY_RECT1_Y << ") " 
               << SAFETY_RECT1_WIDTH << "x" << SAFETY_RECT1_HEIGHT << "\n";
@@ -468,11 +567,12 @@ int main() {
     std::cout << "Ring: inner=" << RING_INNER_RADIUS << " outer=" << RING_OUTER_RADIUS 
               << " offset=(" << RING_CENTER_OFFSET_X << "," << RING_CENTER_OFFSET_Y << ")\n";
     std::cout << "Conditions: white>=" << MIN_WHITE_PIXELS << " (connected), red>=" << MIN_RED_PIXELS << "\n";
-    std::cout << "Thresholds: white>=" << (int)WHITE_THRESHOLD << ", red>=" << (int)RED_THRESHOLD 
-              << ", other<" << (int)OTHER_CHANNEL_MAX << ", dominance=" << (int)RED_DOMINANCE << "\n";
+    std::cout << "Thresholds: white>=" << WHITE_THRESHOLD << ", red>=" << RED_THRESHOLD 
+              << ", other<" << OTHER_CHANNEL_MAX << ", dominance=" << RED_DOMINANCE << "\n";
     std::cout << "Timing: timer=" << TIMER_DURATION_MS << "ms, reset=" << RESET_DELAY_MS 
               << "ms, space=" << SPACE_PRESS_MIN_MS << "-" << SPACE_PRESS_MAX_MS << "ms\n";
-    std::cout << "Save: " << (saveEnabled ? "yes" : "no") << "\n\n";
+    std::cout << "Save: " << (SAVE_ENABLED ? "yes" : "no") << "\n";
+    std::cout << "============================\n\n";
 
     std::vector<PixelPos> whitePixels;
     std::vector<PixelPos> redPixels;
@@ -499,7 +599,6 @@ int main() {
             redPixels.clear();
         }
 
-        // Precise frame timing with busy wait
         while (true) {
             LARGE_INTEGER cur;
             QueryPerformanceCounter(&cur);

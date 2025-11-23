@@ -3,74 +3,117 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>output.bmp — viewer</title>
+  <title>Monochrome Output</title>
   <style>
-    /* Very simple, no roundings, everything centered, dark mode */
-    :root{--bg:#0b0c0d;--fg:#e6e6e6;--muted:#9aa0a6;--panel:#141516}
-    html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif}
-    .no-rounding *{border-radius:0 !important}
-    .container{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:16px;box-sizing:border-box}
-    img{display:block;max-width:100%;max-height:calc(100% - 72px);object-fit:contain;image-rendering:auto}
-    .controls{display:flex;align-items:center;gap:12px}
-    button{background:var(--panel);color:var(--fg);border:1px solid #222;padding:8px 12px;font-size:1rem;cursor:pointer}
-    label{color:var(--muted);font-size:0.95rem;user-select:none}
-    a{color:var(--fg)}
+    /* Monochrome black / dark gray theme */
+    :root{
+      --black:#000000;
+      --dark:#1c1c1c;
+      --muted:#2a2a2a;
+      --text:#dcdcdc;
+    }
+    html,body{
+      height:100%;
+      margin:0;
+      background:var(--black);
+      color:var(--text);
+      font-family:system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+      overflow:hidden; /* keep it clean */
+      user-select:none;
+    }
+
+    /* Centering container */
+    .wrap{
+      min-height:100%;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      gap:1.2rem;
+      padding:2rem;
+      box-sizing:border-box;
+    }
+
+    .card{
+      background:linear-gradient(180deg,var(--dark), var(--muted));
+      padding:18px;
+      border-radius:12px;
+      box-shadow:0 6px 18px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.02);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      max-width:95vw;
+      max-height:95vh;
+    }
+
+    img#output{
+      display:block;
+      max-width:calc(100vw - 64px);
+      max-height:calc(100vh - 64px);
+      width:auto;
+      height:auto;
+      image-rendering: pixelated; /* for bmp look */
+      border-radius:6px;
+      box-shadow:0 6px 12px rgba(0,0,0,0.6);
+      background:var(--black);
+    }
+
+    /* Small caption (optional) */
+    .caption{
+      font-size:12px;
+      color:var(--text);
+      opacity:0.7;
+      margin-top:8px;
+      text-align:center;
+    }
+
+    /* make sure focus outlines are subtle */
+    :focus{outline:2px solid rgba(255,255,255,0.06);outline-offset:2px}
+
+    @media (max-width:420px){
+      .card{padding:10px;border-radius:8px}
+    }
   </style>
 </head>
-<body class="no-rounding">
-  <div class="container">
-    <img id="img" src="output.bmp" alt="output.bmp">
-    <div class="controls">
-      <button id="reload">Reload now</button>
-      <label><input id="autorefresh" type="checkbox" checked> Auto-refresh</label>
-      <label style="margin-left:8px;color:var(--muted);font-size:0.9rem">Interval: <input id="interval" type="number" min="200" value="200" style="width:84px;background:transparent;border:1px solid #222;color:var(--fg);padding:4px;margin-left:6px"></label>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div style="text-align:center">
+        <img id="output" src="output.bmp" alt="output.bmp" />
+        <div class="caption">Refreshing every 200ms — image file: <code>output.bmp</code></div>
+      </div>
     </div>
   </div>
 
   <script>
-    // Configuration
-    const imgEl = document.getElementById('img');
-    const reloadBtn = document.getElementById('reload');
-    const autoCheckbox = document.getElementById('autorefresh');
-    const intervalInput = document.getElementById('interval');
+    // Refresh the image every 200ms by appending a cache-busting timestamp.
+    (function(){
+      const img = document.getElementById('output');
+      const base = img.getAttribute('src').split('?')[0];
+      // initial load includes a timestamp to avoid stale cache
+      img.src = base + '?ts=' + Date.now();
 
-    // Default interval in ms (can be changed by user input)
-    let intervalMs = Number(intervalInput.value) || 200;
-    let timer = null;
+      // Update interval (200ms as requested)
+      const INTERVAL = 200; // ms
+      setInterval(()=>{
+        // preserve current width/height attributes if needed (prevents layout jank)
+        img.src = base + '?ts=' + Date.now();
+      }, INTERVAL);
 
-    // Force image reload and bust caches by appending a timestamp query param
-    function refreshImage() {
-      // Keep the original filename so it can be replaced in the filesystem by your generator
-      const url = 'output.bmp' + '?ts=' + Date.now();
-      imgEl.src = url;
-    }
+      // Optional: allow pausing with spacebar (useful during debugging)
+      let running = true;
+      let handle = null;
+      function start(){ if(!handle) handle = setInterval(()=> img.src = base + '?ts=' + Date.now(), INTERVAL); running = true }
+      function stop(){ if(handle){ clearInterval(handle); handle = null } running = false }
 
-    function startAutoRefresh() {
-      stopAutoRefresh();
-      timer = setInterval(()=>{ if (!document.hidden) refreshImage(); }, intervalMs);
-    }
-    function stopAutoRefresh(){ if (timer){ clearInterval(timer); timer = null; } }
-
-    // UI wiring
-    reloadBtn.addEventListener('click', ()=> refreshImage());
-    autoCheckbox.addEventListener('change', ()=> { if (autoCheckbox.checked) startAutoRefresh(); else stopAutoRefresh(); });
-    intervalInput.addEventListener('change', ()=>{
-      const v = Number(intervalInput.value) || 200;
-      intervalMs = Math.max(200, v);
-      if (autoCheckbox.checked) startAutoRefresh();
-    });
-
-    // Refresh immediately when page becomes visible again
-    document.addEventListener('visibilitychange', ()=>{ if (!document.hidden) refreshImage(); });
-
-    // Initial load
-    window.addEventListener('load', ()=>{
-      refreshImage();
-      if (autoCheckbox.checked) startAutoRefresh();
-    });
-
-    // Optional: small error handling (no visual change to keep UI minimal)
-    imgEl.addEventListener('error', ()=>{ console.debug('Failed to load output.bmp — file may not exist yet or generator not running.'); });
+      window.addEventListener('keydown', (e)=>{
+        if(e.code === 'Space'){
+          e.preventDefault();
+          running ? stop() : start();
+        }
+      });
+    })();
   </script>
 </body>
 </html>
