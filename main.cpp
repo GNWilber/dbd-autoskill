@@ -38,10 +38,10 @@ int SAFETY_RECT2_WIDTH = 60;
 int SAFETY_RECT2_HEIGHT = 4;
 
 // Detection thresholds
-int MIN_WHITE_PIXELS = 6;
+int MIN_WHITE_PIXELS = 30;
 int MIN_RED_PIXELS = 2;
 int TIMER_DURATION_MS = 1200;
-int RESET_DELAY_MS = 100;
+int RESET_DELAY_MS = 200;
 
 // Color thresholds (0-255)
 int WHITE_THRESHOLD = 0xFE;
