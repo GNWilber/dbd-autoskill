@@ -11,6 +11,9 @@
 !*.json
 !*.html
 !*.bat
+!*.ico
+!*.o
+!*.rc
 
 # Blacklist
 .vscode/
