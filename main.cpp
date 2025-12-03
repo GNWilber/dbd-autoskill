@@ -1,5 +1,5 @@
-// g++ -O3 -std=c++11 main.cpp -o screenshot.exe -lgdi32
-// g++ -O3 -std=c++11 main.cpp icon.o -o screenshot.exe -lgdi32
+// Compile with: g++ -O3 -std=c++11 main.cpp -o screenshot.exe -lgdi32
+
 #include <windows.h>
 #include <iostream>
 #include <string>
@@ -10,6 +10,10 @@
 #include <random>
 #include <fstream>
 #include <sstream>
+#include <chrono>
+#include <algorithm>
+#include <cctype>
+#include <conio.h>
 
 // ============================================================================
 // DEFAULT CONFIGURATION - Used when creating new config.json
@@ -172,6 +176,11 @@ struct PixelPos {
 // ============================================================================
 // UTILITY FUNCTIONS
 // ============================================================================
+
+void OpenIndexHtml() {
+    // Open index.html with default browser
+    ShellExecute(NULL, "open", "index.html", NULL, NULL, SW_SHOWNORMAL);
+}
 
 void PressSpaceKey() {
     std::random_device rd;
@@ -553,22 +562,75 @@ int main() {
 
     const char* configFile = "config.json";
     
-    std::cout << "Press Enter to load config.json, or type anything to reset to defaults: ";
-    std::string input;
-    std::getline(std::cin, input);
+    // Open index.html in browser
+    OpenIndexHtml();
     
-    if (input.empty()) {
-        // Try to load config
+    std::cout << "=== DBD Auto-Skill Check ===\n\n";
+    
+    // 5 second countdown with reset detection
+    const int COUNTDOWN_SECONDS = 5;
+    bool resetRequested = false;
+    std::string inputBuffer;
+    
+    std::cout << "Type 'reset' to restore default settings\n";
+    std::cout << "Starting in ";
+    
+    auto startTime = std::chrono::steady_clock::now();
+    auto endTime = startTime + std::chrono::seconds(COUNTDOWN_SECONDS);
+    
+    while (std::chrono::steady_clock::now() < endTime) {
+        // Check for keyboard input (non-blocking)
+        if (_kbhit()) {
+            char c = _getch();
+            inputBuffer += std::tolower(c);
+            
+            // Check if "reset" is in buffer
+            if (inputBuffer.find("reset") != std::string::npos) {
+                resetRequested = true;
+                std::cout << "\n\nReset requested!\n";
+                break;
+            }
+        }
+        
+        // Calculate remaining time
+        auto now = std::chrono::steady_clock::now();
+        auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - now);
+        int remainingSeconds = remaining.count() / 1000;
+        int progress = ((COUNTDOWN_SECONDS - remainingSeconds) * 100) / COUNTDOWN_SECONDS;
+        
+        // Update progress bar (only every 100ms to reduce flicker)
+        static int lastProgress = -1;
+        if (progress != lastProgress) {
+            std::cout << "\r";
+            std::cout << remainingSeconds + 1 << "s [";
+            for (int i = 0; i < 20; i++) {
+                if (i < progress / 5) {
+                    std::cout << "=";
+                } else {
+                    std::cout << " ";
+                }
+            }
+            std::cout << "] " << progress << "%  ";
+            std::cout.flush();
+            lastProgress = progress;
+        }
+        
+        Sleep(50);
+    }
+    
+    std::cout << "\n\n";
+    
+    // Handle reset or load config
+    if (resetRequested) {
+        std::cout << "Resetting configuration to defaults...\n";
+        SaveConfigToJson(configFile);
+    } else {
         if (LoadConfigFromJson(configFile)) {
             std::cout << "Configuration loaded from " << configFile << "\n";
         } else {
             std::cout << "Config file not found, creating default " << configFile << "\n";
             SaveConfigToJson(configFile);
         }
-    } else {
-        // Reset to defaults
-        std::cout << "Resetting configuration to defaults...\n";
-        SaveConfigToJson(configFile);
     }
 
     double frameDelay = 1000.0 / FPS;
