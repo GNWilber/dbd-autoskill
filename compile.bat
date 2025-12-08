@@ -1,1 +1,1 @@
-g++ -O3 -std=c++11 -static main.cpp icon.o -o screenshot.exe -lgdi32
+g++ -O3 -march=native -flto -std=c++17 -static main.cpp icon.o -o screenshot.exe -lgdi32
